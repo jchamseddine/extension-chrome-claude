@@ -119,13 +119,11 @@ Passer par les moyennes évite d'avoir à calculer l'ordonnée à l'origine. Auc
 c'est volontairement basique — ça suppose un rythme constant, ce qui est faux dès qu'on fait
 une pause.
 
-La projection ne s'affiche **que** si la pente est positive et que l'échéance tombe dans les
-5 h à venir. En dessous de 3 points, le popup affiche « pas assez de données » plutôt qu'un
-ajustement bancal.
-
-> Le garde-fou est un horizon fixe de 5 h, pas l'heure de reset réelle de la fenêtre. Si la
-> fenêtre se réinitialise avant l'échéance projetée, l'annonce est trompeuse. Corriger revient
-> à borner l'horizon par `resets_at` dans `project()` de `popup.js`.
+La projection ne s'affiche **que** si la pente est positive et que l'échéance tombe **avant
+le reset de la fenêtre** (`windows.5h.resets_at`) : au-delà, le compteur repart de zéro et la
+limite ne sera jamais atteinte. Quand `resets_at` manque ou est déjà passé, un horizon fixe
+de 5 h sert de repli. En dessous de 3 points, le popup affiche « pas assez de données »
+plutôt qu'un ajustement bancal.
 
 ### Estimation de contexte
 

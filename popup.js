@@ -16,7 +16,7 @@ var STATUS_LABEL = {
 };
 
 var FIT_WINDOW_MS = 30 * 60 * 1000;   // on ne regarde que les 30 dernieres minutes
-var HORIZON_MS = 5 * 60 * 60 * 1000;  // au-dela de 5h, la projection n'apprend rien
+var HORIZON_MS = 5 * 60 * 60 * 1000;  // repli quand resets_at manque : duree de la fenetre
 var MIN_POINTS = 3;
 
 function node(tag, cls, text) {
@@ -83,8 +83,8 @@ function block(spec, w) {
 //   u = ū + a·(t − t̄)  =>  t(u=1) = t̄ + (1 − ū) / a
 //
 // C'est volontairement basique : ca suppose un rythme de consommation constant, ce qui est
-// faux des qu'on fait une pause. D'ou le garde-fou d'horizon a 5h a l'affichage.
-function project(history) {
+// faux des qu'on fait une pause. D'ou le garde-fou d'horizon a l'affichage.
+function project(history, w5) {
   var now = Date.now();
   var pts = (history || []).filter(function (p) {
     return p && typeof p.t === 'number' && typeof p.u5 === 'number'
@@ -109,14 +109,22 @@ function project(history) {
   // il n'y a alors aucune limite a projeter.
   if (den === 0 || num <= 0) return { enough: true, at: null };
 
+  // Une echeance posterieure au reset de la fenetre ne veut rien dire : le compteur repart
+  // de zero avant, la limite ne sera jamais atteinte. resets_at est en SECONDES Unix ;
+  // horizon fixe en repli quand il manque.
+  var reset = (w5 && typeof w5.resets_at === 'number' && isFinite(w5.resets_at))
+    ? w5.resets_at * 1000
+    : 0;
+  var horizon = reset > now ? reset : now + HORIZON_MS;
+
   var at = mt + (1 - mu) / (num / den);
-  if (!isFinite(at) || at < now || at > now + HORIZON_MS) return { enough: true, at: null };
+  if (!isFinite(at) || at < now || at > horizon) return { enough: true, at: null };
   return { enough: true, at: at };
 }
 
-function renderProjection(history) {
+function renderProjection(history, w5) {
   var el = document.getElementById('projection');
-  var p = project(history);
+  var p = project(history, w5);
 
   if (!p.enough) {
     el.textContent = "Pas assez de données pour estimer le rythme (3 messages minimum sur les 30 dernières minutes).";
@@ -159,7 +167,7 @@ chrome.storage.local.get(['usage', 'usageHistory', 'settings']).then(function (o
   });
   host.hidden = false;
 
-  renderProjection(o.usageHistory);
+  renderProjection(o.usageHistory, windows['5h']);
 
   var footer = document.getElementById('footer');
   footer.textContent = 'Mis à jour ' + agoText(Date.now() - usage.updatedAt);
