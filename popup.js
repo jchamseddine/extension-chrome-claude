@@ -1,11 +1,13 @@
-// Popup : rend la derniere valeur connue de message_limit stockee sous la cle "usage".
-// Ne lit que "windows" ; l'objet est stocke entier, donc representativeClaim et resolved
-// restent disponibles pour un usage futur.
+// Popup : rend la derniere valeur connue de message_limit stockee sous la cle "usage",
+// une projection du moment ou la fenetre 5h atteindrait 100 %, et le reglage des
+// notifications de seuil.
+// Ne lit que "windows" de message_limit ; l'objet est stocke entier, donc
+// representativeClaim et resolved restent disponibles pour un usage futur.
 'use strict';
 
 var WINDOWS = [
-  { key: '5h', label: 'Session — 5 h', withDay: false },
-  { key: '7d', label: 'Semaine — 7 j', withDay: true }
+  { key: '5h', withDay: false },
+  { key: '7d', withDay: true }
 ];
 
 var STATUS_LABEL = {
@@ -13,34 +15,15 @@ var STATUS_LABEL = {
   over_limit: 'limite atteinte'
 };
 
+var FIT_WINDOW_MS = 30 * 60 * 1000;   // on ne regarde que les 30 dernieres minutes
+var HORIZON_MS = 5 * 60 * 60 * 1000;  // au-dela de 5h, la projection n'apprend rien
+var MIN_POINTS = 3;
+
 function node(tag, cls, text) {
   var n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text != null) n.textContent = text;
   return n;
-}
-
-// "dans 3 h 12" — resets_at des fenetres est en secondes Unix, pas en millisecondes.
-function untilText(ms) {
-  if (ms <= 0) return '';
-  var min = Math.round(ms / 60000);
-  if (min < 60) return ' (dans ' + min + ' min)';
-  var h = Math.floor(min / 60);
-  var m = min % 60;
-  if (h < 24) return ' (dans ' + h + ' h' + (m ? ' ' + String(m).padStart(2, '0') : '') + ')';
-  return ' (dans ' + Math.round(h / 24) + ' j)';
-}
-
-function resetText(sec, withDay) {
-  if (typeof sec !== 'number' || !isFinite(sec)) return '';
-  var d = new Date(sec * 1000);
-  var now = new Date();
-  var time = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  var sameDay = d.toDateString() === now.toDateString();
-  var when = (withDay && !sameDay)
-    ? d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) + ' à ' + time
-    : 'à ' + time;
-  return 'Réinitialisation ' + when + untilText(d - now);
 }
 
 function agoText(ms) {
@@ -52,6 +35,8 @@ function agoText(ms) {
   return 'il y a ' + Math.round(h / 24) + ' j';
 }
 
+// ---- fenetres ----------------------------------------------------------------
+
 function block(spec, w) {
   var u = utilOf(w);
   var color = colorFor(w);
@@ -59,7 +44,7 @@ function block(spec, w) {
   var box = node('div', 'win');
 
   var head = node('div', 'head');
-  head.appendChild(node('span', 'label', spec.label));
+  head.appendChild(node('span', 'label', USAGE_LABELS[spec.key]));
   head.appendChild(node('span', 'pct', u === null ? '—' : Math.round(u * 100) + ' %'));
   box.appendChild(head);
 
@@ -84,12 +69,86 @@ function block(spec, w) {
   return box;
 }
 
-chrome.storage.local.get('usage').then(function (o) {
+// ---- projection --------------------------------------------------------------
+
+// Regression lineaire des moindres carres, faite a la main (aucune dependance) sur les
+// points (t, utilization_5h) des 30 dernieres minutes. On cherche la droite u = a·t + b
+// qui minimise la somme des carres des ecarts verticaux :
+//
+//   a = Σ(t − t̄)(u − ū) / Σ(t − t̄)²        (t̄ et ū = moyennes)
+//
+// puis on resout u = 1 sur cette droite. En passant par les moyennes, l'ordonnee a
+// l'origine n'a pas besoin d'etre calculee :
+//
+//   u = ū + a·(t − t̄)  =>  t(u=1) = t̄ + (1 − ū) / a
+//
+// C'est volontairement basique : ca suppose un rythme de consommation constant, ce qui est
+// faux des qu'on fait une pause. D'ou le garde-fou d'horizon a 5h a l'affichage.
+function project(history) {
+  var now = Date.now();
+  var pts = (history || []).filter(function (p) {
+    return p && typeof p.t === 'number' && typeof p.u5 === 'number'
+        && now - p.t <= FIT_WINDOW_MS;
+  });
+
+  if (pts.length < MIN_POINTS) return { enough: false, at: null };
+
+  var n = pts.length;
+  var mt = 0, mu = 0;
+  pts.forEach(function (p) { mt += p.t; mu += p.u5; });
+  mt /= n;
+  mu /= n;
+
+  var num = 0, den = 0;
+  pts.forEach(function (p) {
+    num += (p.t - mt) * (p.u5 - mu);
+    den += (p.t - mt) * (p.t - mt);
+  });
+
+  // den = 0 : tous les points au meme instant. num <= 0 : usage stable ou en baisse,
+  // il n'y a alors aucune limite a projeter.
+  if (den === 0 || num <= 0) return { enough: true, at: null };
+
+  var at = mt + (1 - mu) / (num / den);
+  if (!isFinite(at) || at < now || at > now + HORIZON_MS) return { enough: true, at: null };
+  return { enough: true, at: at };
+}
+
+function renderProjection(history) {
+  var el = document.getElementById('projection');
+  var p = project(history);
+
+  if (!p.enough) {
+    el.textContent = "Pas assez de données pour estimer le rythme (3 messages minimum sur les 30 dernières minutes).";
+    el.hidden = false;
+    return;
+  }
+  if (p.at === null) return;   // rythme nul ou limite trop lointaine : rien a annoncer
+
+  var time = new Date(p.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  el.textContent = 'À ce rythme, tu atteindras ta limite de session vers ' + time + '.';
+  el.className = 'rule hot';
+  el.hidden = false;
+}
+
+// ---- reglages ----------------------------------------------------------------
+
+function renderSettings(settings) {
+  var box = document.getElementById('notif');
+  box.checked = !!(settings && settings.notifications);
+  box.addEventListener('change', function () {
+    chrome.storage.local.set({ settings: { notifications: box.checked } });
+  });
+}
+
+// ---- rendu -------------------------------------------------------------------
+
+chrome.storage.local.get(['usage', 'usageHistory', 'settings']).then(function (o) {
+  renderSettings(o.settings);
+
   var usage = o.usage;
   var windows = (usage && usage.data && usage.data.windows) || null;
-  var known = windows && (windows['5h'] || windows['7d']);
-
-  if (!known) {
+  if (!(windows && (windows['5h'] || windows['7d']))) {
     document.getElementById('empty').hidden = false;
     return;
   }
@@ -99,6 +158,8 @@ chrome.storage.local.get('usage').then(function (o) {
     host.appendChild(block(spec, windows[spec.key]));
   });
   host.hidden = false;
+
+  renderProjection(o.usageHistory);
 
   var footer = document.getElementById('footer');
   footer.textContent = 'Mis à jour ' + agoText(Date.now() - usage.updatedAt);

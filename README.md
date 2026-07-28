@@ -69,6 +69,9 @@ Clés `chrome.storage.local` :
 
 - `usage` = `{ data: <message_limit>, updatedAt }` — clé unique, écrasée à chaque écriture
 - `ctx:<uuid>` = `{ chars, tokens, updatedAt }` — une clé par conversation, LRU 20
+- `usageHistory` = `[{ t, u5, u7 }, …]` — historique roulant, 50 points max
+- `notifyState` = `{ windows: { '5h': { threshold, overLimit }, … }, overage }` — anti-spam
+- `settings` = `{ notifications: false }` — réglages du popup
 
 Pas de `chrome.alarms` : tout est piloté par l'événement SSE, il n'y a rien à interroger.
 
@@ -79,6 +82,50 @@ Deux anneaux concentriques dessinés dans un `OffscreenCanvas` : **extérieur = 
 orange < 90 %, rouge au-delà ; gris si la donnée manque). Le badge texte porte le % de la
 fenêtre 5 h. Aucun PNG n'est livré : le service worker dessine l'icône dès `onInstalled` et
 `onStartup`.
+
+### Notifications de seuil
+
+**Désactivées par défaut** — la case à cocher est dans le popup, la préférence va dans
+`settings.notifications`.
+
+Trois seuils : **75 %**, **90 %**, **95 %**, évalués séparément sur chaque fenêtre. Le corps
+de la notification donne la fenêtre, le % courant et l'heure de reset en heure locale.
+
+L'anti-spam mémorise le dernier seuil notifié par fenêtre dans `notifyState`. On ne notifie
+que si le seuil franchi est **supérieur** au dernier notifié ; redescendre le baisse
+silencieusement, ce qui réarme la notification en cas de nouveau franchissement (typiquement
+après un reset de fenêtre). Deux notifications distinctes s'ajoutent, chacune une seule fois
+par transition : passage d'une fenêtre à `over_limit`, et passage de `overageInUse` à `true`.
+
+> `overageInUse` n'a **jamais été observé** dans nos captures. Il est lu à deux emplacements
+> plausibles (`data.overageInUse` et `data.resolved.overageInUse`) et simplement ignoré s'il
+> n'existe pas. À corriger dans `evaluate()` de `background.js` si le champ se révèle ailleurs.
+
+L'icône de la notification est encodée en PNG data-URL depuis le même `OffscreenCanvas` que
+l'icône de toolbar — `chrome.notifications` exige un `iconUrl`, et c'est ce qui permet de ne
+livrer aucun binaire dans le dépôt.
+
+### Estimation du temps avant la limite
+
+Chaque événement `message_limit` ajoute un point `{ t, u5, u7 }` à `usageHistory` (50 max,
+les plus anciens sont jetés). Le popup ajuste une **régression linéaire des moindres carrés**
+sur les points des 30 dernières minutes :
+
+```
+a = Σ(t − t̄)(u − ū) / Σ(t − t̄)²      puis      t(u=1) = t̄ + (1 − ū) / a
+```
+
+Passer par les moyennes évite d'avoir à calculer l'ordonnée à l'origine. Aucune bibliothèque,
+c'est volontairement basique — ça suppose un rythme constant, ce qui est faux dès qu'on fait
+une pause.
+
+La projection ne s'affiche **que** si la pente est positive et que l'échéance tombe dans les
+5 h à venir. En dessous de 3 points, le popup affiche « pas assez de données » plutôt qu'un
+ajustement bancal.
+
+> Le garde-fou est un horizon fixe de 5 h, pas l'heure de reset réelle de la fenêtre. Si la
+> fenêtre se réinitialise avant l'échéance projetée, l'annonce est trompeuse. Corriger revient
+> à borner l'horizon par `resets_at` dans `project()` de `popup.js`.
 
 ### Estimation de contexte
 
