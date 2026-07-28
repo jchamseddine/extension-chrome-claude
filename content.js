@@ -20,12 +20,23 @@
     if (!d || typeof d !== 'object') return;
     if (d.__cu !== MAGIC) return;
     if (d.kind !== 'limit' || !d.data) return;
-    if (!alive()) return;
+
+    // Panne silencieuse la plus courante : l'extension a ete rechargee sans que l'onglet le
+    // soit. Le patch MAIN continue d'emettre, mais plus rien ne peut etre ecrit.
+    if (!alive()) {
+      console.error('[usage] contexte d\'extension invalide : message_limit recu mais non ' +
+                    'enregistre. Rechargez l\'onglet claude.ai.');
+      return;
+    }
 
     try {
       chrome.storage.local.set({
         usage: { data: d.data, updatedAt: Date.now() }
-      }).catch(function () { /* contexte invalide */ });
-    } catch (e) { /* contexte invalide */ }
+      }).catch(function (e) {
+        console.error('[usage] ecriture de la cle "usage" echouee :', e);
+      });
+    } catch (e) {
+      console.error('[usage] ecriture de la cle "usage" impossible :', e);
+    }
   });
 })();

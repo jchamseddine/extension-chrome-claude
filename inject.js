@@ -16,13 +16,20 @@
     Object.defineProperty(window, '__claudeUsageV1', { value: true });
   } catch (e) { /* pas grave */ }
 
-  // Passer a true pour tracer les captures dans la console de la page.
-  var DEBUG = false;
+  // Active pour le diagnostic de la cle "usage" jamais ecrite. A repasser a false une fois
+  // la donnee confirmee dans chrome.storage.local.
+  var DEBUG = true;
 
   var MAGIC = '__claude_usage_v1__';
   var SSE_BYTE_BUDGET = 4e6;
   var SSE_MS_BUDGET = 120000;
   var SSE_LINE_MAX = 64 * 1024;
+
+  // Detection sur la ligne brute, comme la Phase 1 (qui, elle, captait bien message_limit).
+  // Surtout PAS de contrainte sur un prefixe "data:" : une donnee SSE peut etre repartie sur
+  // plusieurs lignes, arriver avec du padding, ou sans prefixe du tout.
+  var LIMIT_RE = /"type"\s*:\s*"message_limit"/;
+  var DELTA_RE = /"type"\s*:\s*"content_block_delta"/;
 
   // Teste sur le pathname : l'URL reelle est
   // /api/organizations/<org>/chat_conversations/<uuid>[/completion].
@@ -99,8 +106,16 @@
   // claude.ai). On n'emet que sur "message_limit" et une seule fois a la sortie du flux.
   function tapEventStream(hit, res) {
     var clone, reader;
-    try { clone = res.clone(); } catch (e) { return; }
-    try { reader = clone.body.getReader(); } catch (e) { return; }
+    try { clone = res.clone(); } catch (e) {
+      if (DEBUG) console.warn('[usage] tap : clone impossible', e);
+      return;
+    }
+    try { reader = clone.body.getReader(); } catch (e) {
+      if (DEBUG) console.warn('[usage] tap : reader impossible', e);
+      return;
+    }
+
+    if (DEBUG) console.log('[usage] tap start', hit.uuid);
 
     var dec = new TextDecoder();
     var deadline = Date.now() + SSE_MS_BUDGET;
@@ -108,27 +123,47 @@
     var carry = '';
     var bytes = 0;
     var replyChars = 0;
+    var lines = 0;      // jalons de diagnostic : "aucun log" doit pouvoir se distinguer
+    var limits = 0;     // de "le tap tourne mais ne matche rien"
+
+    // Le JSON commence au premier '{' : tolere "data:", "data: ", du padding, ou l'absence
+    // de prefixe. L'offset 5 code en dur de la version precedente n'admettait que "data:".
+    function payloadOf(line) {
+      var i = line.indexOf('{');
+      return i === -1 ? null : JSON.parse(line.slice(i));
+    }
 
     function onLine(line) {
-      if (line.indexOf('data:') !== 0) return;
+      lines++;
+      if (line.indexOf('{') === -1) return;   // lignes "event:", commentaires ":", vides
 
-      if (line.indexOf('"content_block_delta"') !== -1) {
+      if (DELTA_RE.test(line)) {
         try {
-          var d = JSON.parse(line.slice(5)).delta;
+          var d = payloadOf(line).delta;
           var t = d && (d.text || d.thinking);
           if (typeof t === 'string') replyChars += t.length;
-        } catch (e) { /* pas grave */ }
+        } catch (e) { /* pas grave : un delta perdu ne fausse l'estimation qu'a la marge */ }
         return;
       }
 
-      if (line.indexOf('"message_limit"') !== -1) {
+      if (LIMIT_RE.test(line)) {
+        var o;
         try {
-          var o = JSON.parse(line.slice(5));
-          if (o && o.type === 'message_limit' && o.message_limit) {
-            emit({ kind: 'limit', data: o.message_limit });
-            if (DEBUG) console.log('[usage] message_limit', o.message_limit);
-          }
-        } catch (e) { /* pas grave */ }
+          o = payloadOf(line);
+        } catch (e) {
+          // Ne plus jamais jeter en silence : c'est ce qui a rendu cette panne indiagnosticable.
+          console.warn('[usage] message_limit repere mais JSON illisible :', e.message,
+                       '| debut de ligne :', line.slice(0, 200));
+          return;
+        }
+        if (o && o.type === 'message_limit' && o.message_limit) {
+          limits++;
+          if (DEBUG) console.log('[usage] message_limit extrait, envoi vers content.js',
+                                 o.message_limit);
+          emit({ kind: 'limit', data: o.message_limit });
+        } else if (DEBUG) {
+          console.warn('[usage] ligne message_limit sans charge utile exploitable', o);
+        }
       }
     }
 
@@ -155,7 +190,14 @@
       } catch (e) { /* pas grave */ }
 
       emit({ kind: 'reply', uuid: hit.uuid, chars: replyChars });
-      if (DEBUG) console.log('[usage] tap end', end, 'reponse', replyChars, 'caracteres');
+      if (DEBUG) {
+        console.log('[usage] tap end', end, '| lignes:', lines, '| message_limit trouves:',
+                    limits, '| reponse:', replyChars, 'caracteres');
+        if (!limits) {
+          console.warn('[usage] aucun message_limit dans ce flux : la cle "usage" ne sera ' +
+                       'pas ecrite. Verifier le format reel des lignes SSE.');
+        }
+      }
     }
 
     function step() {

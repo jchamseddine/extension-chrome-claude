@@ -149,8 +149,17 @@ résultats de recherche web. Le vrai contexte est donc toujours plus grand que c
 
 ## Debug
 
-`inject.js` commence par `var DEBUG = false;`. Le passer à `true` trace dans la console de
-la page chaque `message_limit`, chaque snapshot et la fin de chaque flux.
+`inject.js` commence actuellement par `var DEBUG = true;` — diagnostic en cours sur la clé
+`usage`. Les logs sortent dans la console de **la page claude.ai**, pas celle du popup :
+`[usage] tap start`, `[usage] message_limit extrait…`, puis `[usage] tap end … | message_limit
+trouvés: N`. Un `tap start` sans `message_limit` derrière dit que le flux ne porte pas
+l'événement là où on le cherche ; aucun `tap start` du tout dit que le patch `fetch` ne voit
+pas la requête.
+
+> **Après avoir rechargé l'extension, recharger aussi l'onglet claude.ai.** Sinon les content
+> scripts de l'onglet sont orphelins : ils reçoivent encore les messages mais ne peuvent plus
+> rien écrire. `content.js` le signale désormais par un `console.error` explicite, au lieu de
+> l'abandon silencieux qui a rendu cette panne indiagnosticable.
 
 Pour tester les états dégradés sans attendre une vraie limite, depuis la console du service
 worker (`chrome://extensions` → *service worker*) :
