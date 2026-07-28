@@ -1,0 +1,2 @@
+# Config locale de Claude Code (permissions de la machine), pas de l'extension
+.claude/settings.local.json

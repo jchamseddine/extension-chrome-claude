@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Claude Usage",
+  "version": "1.0.0",
+  "description": "Affiche l'usage de session (5h) et hebdomadaire (7j) de claude.ai, plus une estimation du contexte de la conversation en cours.",
+  "minimum_chrome_version": "111",
+  "permissions": ["storage"],
+  "host_permissions": ["https://claude.ai/*", "https://*.claude.ai/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Claude Usage"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
+      "js": ["inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
+      "js": ["content.js", "context-estimator.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

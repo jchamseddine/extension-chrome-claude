@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Claude Usage</title>
+  <style>
+    body {
+      font: 13px/1.45 system-ui, sans-serif;
+      margin: 0;
+      padding: 14px;
+      width: 260px;
+      color: #1c1c1e;
+      background: #fff;
+    }
+    .win + .win { margin-top: 16px; }
+    .head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+    .label { color: #6b7280; font-size: 12px; }
+    .pct { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .bar {
+      height: 6px;
+      margin: 6px 0 4px;
+      border-radius: 999px;
+      background: rgba(128, 128, 128, .25);
+      overflow: hidden;
+    }
+    .bar > i { display: block; height: 100%; border-radius: 999px; }
+    .reset { color: #6b7280; font-size: 12px; }
+    .status {
+      display: inline-block;
+      margin-top: 5px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      color: #fff;
+    }
+    footer {
+      margin-top: 16px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(128, 128, 128, .25);
+      color: #9ca3af;
+      font-size: 11px;
+    }
+    #empty { color: #6b7280; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #f5f5f4; background: #1c1c1e; }
+      .label, .reset, #empty { color: #a1a1aa; }
+      footer { color: #71717a; }
+    }
+  </style>
+</head>
+<body>
+  <div id="empty" hidden>Aucune donn&eacute;e pour l'instant. Envoyez un message sur claude.ai&nbsp;: l'usage est lu dans la r&eacute;ponse.</div>
+  <div id="windows" hidden></div>
+  <footer id="footer" hidden></footer>
+  <script src="common.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
