@@ -66,9 +66,12 @@ chrome.storage.onChanged.addListener(function (changes, area) {
 chrome.runtime.onStartup.addListener(render);
 
 chrome.runtime.onInstalled.addListener(function () {
-  // Les captures de la Phase 1 (sniffer) sont devenues orphelines.
+  // Cles orphelines : captures de la Phase 1 (sniffer), et "context" d'avant la
+  // segmentation par conversation (remplacee par les cles "ctx:<uuid>").
   chrome.storage.local.get(null).then(function (all) {
-    var stale = Object.keys(all).filter(function (k) { return k.indexOf('sniff:') === 0; });
+    var stale = Object.keys(all).filter(function (k) {
+      return k.indexOf('sniff:') === 0 || k === 'context';
+    });
     if (stale.length) chrome.storage.local.remove(stale).catch(function () {});
   }, function () {});
   render();

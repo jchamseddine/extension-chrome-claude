@@ -219,4 +219,26 @@
     } catch (e) { /* pas grave */ }
     window.fetch = patchedFetch;
   }
+
+  // ---- navigation SPA ------------------------------------------------------
+
+  // Chaque monde a son propre History.prototype : patcher pushState depuis le monde isole
+  // n'intercepterait rien, les appels de la page passent par SON prototype. Le patch doit
+  // donc vivre ici, et le changement d'URL est relaye par postMessage.
+  function emitNav() {
+    emit({ kind: 'navigation', path: location.pathname });
+  }
+
+  ['pushState', 'replaceState'].forEach(function (name) {
+    var native = history[name];
+    if (typeof native !== 'function') return;
+    history[name] = function () {
+      var r = native.apply(this, arguments);   // location est deja a jour au retour
+      try { emitNav(); } catch (e) { /* pas grave */ }
+      return r;
+    };
+  });
+
+  // pushState ne couvre pas le retour arriere.
+  window.addEventListener('popstate', emitNav);
 })();

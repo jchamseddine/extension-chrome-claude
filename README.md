@@ -58,17 +58,17 @@ même si le popup ne rend que `windows`.
 
 | Fichier | Monde | Rôle |
 | --- | --- | --- |
-| `inject.js` | MAIN | patch de `fetch`, tap SSE, extraction de `message_limit` + comptage de caractères |
+| `inject.js` | MAIN | patch de `fetch` et de l'History API, tap SSE, extraction de `message_limit` + comptage de caractères |
 | `content.js` | isolé | écrit la clé `usage` à chaque `message_limit` reçu |
-| `context-estimator.js` | isolé | tient l'estimation de contexte et affiche la pastille sur `/chat/*` |
+| `context-estimator.js` | isolé | tient l'estimation de contexte par conversation et affiche la pastille sur `/chat/*` |
 | `background.js` | service worker | dessine l'icône et le badge sur `chrome.storage.onChanged` |
 | `common.js` | SW + popup | seuils de couleur partagés (`utilOf`, `colorFor`) |
 | `popup.html` / `popup.js` | popup | les deux fenêtres, leur reset et leur statut |
 
-Deux clés `chrome.storage.local`, chacune écrasée à chaque écriture :
+Clés `chrome.storage.local` :
 
-- `usage` = `{ data: <message_limit>, updatedAt }`
-- `context` = `{ uuid, chars, updatedAt }` (dernière conversation seulement)
+- `usage` = `{ data: <message_limit>, updatedAt }` — clé unique, écrasée à chaque écriture
+- `ctx:<uuid>` = `{ chars, tokens, updatedAt }` — une clé par conversation, LRU 20
 
 Pas de `chrome.alarms` : tout est piloté par l'événement SSE, il n'y a rien à interroger.
 
@@ -87,6 +87,17 @@ nouveau message — l'historique reste côté serveur. La base vient donc du GET
 conversation, à laquelle on ajoute à chaud les caractères envoyés puis ceux de la réponse
 streamée ; le total est divisé par 4 pour approcher un nombre de tokens. Un rechargement de
 page resynchronise sur la valeur réelle.
+
+L'estimation est tenue **par conversation**, sous la clé `ctx:<uuid>` où `<uuid>` vient de
+l'URL `/chat_conversations/<uuid>/completion`. Les 20 conversations les plus récemment mises
+à jour sont conservées, les autres sont supprimées (LRU).
+
+La pastille lit l'UUID de l'**URL de la page**, pas celui des requêtes : passer d'une
+conversation à l'autre sans rechargement met à jour l'affichage, via le patch de
+`pushState` / `replaceState` posé côté MAIN (chaque monde a son propre `History.prototype`,
+patcher depuis le monde isolé n'intercepterait rien). Sans estimation connue pour la
+conversation ouverte, la pastille affiche *contexte non estimé* plutôt qu'un « ~0 tokens »
+trompeur.
 
 Ne sont pas comptés : les instructions système, les outils, les documents de projet, les
 résultats de recherche web. Le vrai contexte est donc toujours plus grand que ce chiffre.
