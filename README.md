@@ -7,73 +7,109 @@ Extension Chrome personnelle (Manifest V3, JS vanilla, aucun build step). Elle a
 2. une **estimation** de la taille du contexte de la conversation ouverte, en pastille sur
    la page.
 
-Rien ne sort de la machine : tout est dans `chrome.storage.local`, aucun serveur.
+Rien ne sort de la machine, sauf vers claude.ai lui-même : tout est dans
+`chrome.storage.local`, aucun serveur tiers.
 
 ## Installation
 
 1. `chrome://extensions` → activer le **mode développeur**
 2. **Charger l'extension non empaquetée** → sélectionner ce dossier
-3. Ouvrir `https://claude.ai` et envoyer un message
+3. Être connecté à `https://claude.ai` — le sondage utilise les cookies de session
 
 Chrome 111+ requis (`"world": "MAIN"` en content script statique).
 
 Après avoir rechargé l'extension, **toujours recharger l'onglet claude.ai** — sinon le patch
-injecté survit mais ne peut plus écrire.
+injecté survit mais l'onglet ne peut plus servir de relais.
+
+## ⚠️ Endpoint d'usage : à compléter
+
+L'URL réelle de l'API d'usage **n'a pas été capturée**. Les constantes de
+[`usage-source.js`](usage-source.js) sont des suppositions, extrapolées du seul chemin interne
+connu avec certitude (`/api/organizations/<org>/chat_conversations/<uuid>/completion`).
+
+Pour les corriger : ouvrir `https://claude.ai/new#settings/usage`, onglet **Network**, filtre
+*Fetch/XHR*, recharger la page, repérer la requête qui porte les pourcentages. Puis, dans
+`usage-source.js` uniquement :
+
+- `USAGE_PATH` ← son pathname (`{org}` marque l'uuid d'organisation, à retirer s'il n'y en a pas) ;
+- `parseUsage()` ← le mapping du JSON réel vers `windows['5h'] / ['7d']`.
+
+Le service worker dit lequel des deux reste à faire : `HTTP 404` = URL fausse ; *format de
+réponse inconnu* (avec le JSON reçu en console) = seul `parseUsage()` manque.
 
 ## D'où viennent les données
 
-Aucun appel réseau n'est émis par l'extension. Elle observe uniquement les réponses que
-claude.ai reçoit déjà, sur deux URL :
+L'usage est **sondé** toutes les 60 s par le service worker (`chrome.alarms`), avec
+`credentials: "include"`. Le service worker n'ayant pas d'origine `claude.ai`, l'API peut
+refuser sa requête : sur **401/403**, l'appel est rejoué depuis un onglet `claude.ai` ouvert,
+où il est same-origin (`content.js` sert de relais). Sans onglet ouvert et avec un refus, le
+sondage échoue et le popup montre l'âge de la dernière valeur connue.
+
+L'estimation de contexte, elle, n'émet toujours **aucun** appel : elle observe les réponses
+que claude.ai reçoit déjà.
 
 | URL (pathname) | Ce qu'on en tire |
 | --- | --- |
-| `…/chat_conversations/<uuid>/completion` (SSE) | l'événement `message_limit`, et la longueur du texte streamé |
+| l'endpoint d'usage (voir ci-dessus) | `utilization`, `status` et `resets_at` des fenêtres 5 h et 7 j |
+| `…/chat_conversations/<uuid>/completion` (SSE) | la longueur du texte streamé |
 | `…/chat_conversations/<uuid>` (GET JSON) | la longueur de l'historique complet |
 
-L'événement `message_limit` du flux SSE a cette forme :
+`parseUsage()` normalise la réponse vers la forme historique de l'événement SSE
+`message_limit`, qui reste le contrat interne de la clé `usage` :
 
 ```json
 {
-  "type": "message_limit",
-  "message_limit": {
-    "representativeClaim": "five_hour",
-    "windows": {
-      "5h": { "status": "within_limit", "resets_at": 1785260400, "utilization": 0.32 },
-      "7d": { "status": "within_limit", "resets_at": 1785582000, "utilization": 0.29 }
-    },
-    "resolved": { "...": "..." }
-  }
+  "representativeClaim": "five_hour",
+  "windows": {
+    "5h": { "status": "within_limit", "resets_at": 1785260400, "utilization": 0.32 },
+    "7d": { "status": "within_limit", "resets_at": 1785582000, "utilization": 0.29 }
+  },
+  "resolved": { "...": "..." }
 }
 ```
 
 `utilization` est une fraction 0-1 ; `windows.*.resets_at` est un timestamp Unix en
-**secondes** (alors que `resolved.limit.resets_at` est une chaîne ISO 8601). `status` peut
-valoir autre chose que `within_limit` (`approaching_limit`, `over_limit`, …) : le popup
-affiche alors une puce, et l'icône passe au rouge / orange quel que soit le pourcentage.
+**secondes** — `parseUsage()` convertit au passage l'ISO 8601 et les millisecondes, les deux
+autres formes déjà croisées chez claude.ai. `status` peut valoir autre chose que
+`within_limit` (`approaching_limit`, `over_limit`, …) : le popup affiche alors une puce, et
+l'icône passe au rouge / orange quel que soit le pourcentage.
 
-L'objet est stocké **entier**, donc `representativeClaim` et `resolved` restent disponibles
-même si le popup ne rend que `windows`.
+Un champ absent ou mal typé est **omis**, jamais mis à une valeur inventée : `utilOf()` rend
+alors `null`, donc du gris, plutôt qu'un chiffre faux.
 
 ## Architecture
 
 | Fichier | Monde | Rôle |
 | --- | --- | --- |
-| `inject.js` | MAIN | patch de `fetch` et de l'History API, tap SSE, extraction de `message_limit` + comptage de caractères |
-| `content.js` | isolé | écrit la clé `usage` à chaque `message_limit` reçu |
+| `inject.js` | MAIN | patch de `fetch` et de l'History API, tap SSE, comptage de caractères |
+| `content.js` | isolé | relais de secours : refait le fetch d'usage same-origin quand le SW est refusé |
 | `context-estimator.js` | isolé | tient l'estimation de contexte par conversation et affiche la pastille sur `/chat/*` |
-| `background.js` | service worker | dessine l'icône et le badge sur `chrome.storage.onChanged` |
+| `background.js` | service worker | sonde l'API toutes les 60 s, écrit `usage`, dessine l'icône, notifie |
+| `usage-source.js` | SW | **seul** point d'adaptation à l'API : URL + `parseUsage()` |
 | `common.js` | SW + popup | seuils de couleur partagés (`utilOf`, `colorFor`) |
 | `popup.html` / `popup.js` | popup | les deux fenêtres, leur reset et leur statut |
 
 Clés `chrome.storage.local` :
 
-- `usage` = `{ data: <message_limit>, updatedAt }` — clé unique, écrasée à chaque écriture
+- `usage` = `{ data, updatedAt }` — clé unique, réécrite **à chaque sondage** même si rien n'a bougé
+- `orgId` = uuid d'organisation mis en cache, invalidé sur 401/403/404
 - `ctx:<uuid>` = `{ chars, tokens, updatedAt }` — une clé par conversation, LRU 20
 - `usageHistory` = `[{ t, u5, u7 }, …]` — historique roulant, 50 points max
 - `notifyState` = `{ windows: { '5h': { threshold, overLimit }, … }, overage }` — anti-spam
 - `settings` = `{ notifications: false }` — réglages du popup
 
-Pas de `chrome.alarms` : tout est piloté par l'événement SSE, il n'y a rien à interroger.
+### Sondage
+
+Une alarme `usage-poll` à `periodInMinutes: 1` (le plancher de `chrome.alarms`), plus un
+sondage immédiat sur `onStartup` et `onInstalled` pour ne pas attendre la première alarme.
+
+Le service worker étant détruit et relancé en permanence, le code de premier niveau rejoue à
+chaque réveil : l'alarme n'est (re)créée que si `chrome.alarms.get` la trouve absente —
+`create` remettrait le compte à zéro et repousserait le sondage indéfiniment.
+
+L'icône, l'historique et les notifications restent branchés sur `chrome.storage.onChanged` :
+l'événement se déclenche **aussi** dans le contexte qui a écrit, le sondage n'a donc rien à
+appeler directement.
 
 ### Icône
 
@@ -107,8 +143,10 @@ livrer aucun binaire dans le dépôt.
 
 ### Estimation du temps avant la limite
 
-Chaque événement `message_limit` ajoute un point `{ t, u5, u7 }` à `usageHistory` (50 max,
-les plus anciens sont jetés). Le popup ajuste une **régression linéaire des moindres carrés**
+Chaque sondage ajoute un point `{ t, u5, u7 }` à `usageHistory` (50 max, les plus anciens
+sont jetés) — soit une série régulière à 1 point/minute, ce qui donne bien plus de sens à
+l'ajustement qu'un point par message envoyé. 50 points couvrent 50 min, la fenêtre
+d'ajustement en utilise 30. Le popup ajuste une **régression linéaire des moindres carrés**
 sur les points des 30 dernières minutes :
 
 ```
@@ -122,8 +160,10 @@ une pause.
 La projection ne s'affiche **que** si la pente est positive et que l'échéance tombe **avant
 le reset de la fenêtre** (`windows.5h.resets_at`) : au-delà, le compteur repart de zéro et la
 limite ne sera jamais atteinte. Quand `resets_at` manque ou est déjà passé, un horizon fixe
-de 5 h sert de repli. En dessous de 3 points, le popup affiche « pas assez de données »
-plutôt qu'un ajustement bancal.
+de 5 h sert de repli. En dessous de 3 points — donc pendant les 3 premières minutes de
+sondage — le popup affiche « pas assez de données » plutôt qu'un ajustement bancal. À
+l'inverse, une période sans activité donne une pente nulle : la projection disparaît au lieu
+d'annoncer une échéance imaginaire.
 
 ### Estimation de contexte
 
@@ -149,17 +189,24 @@ résultats de recherche web. Le vrai contexte est donc toujours plus grand que c
 
 ## Debug
 
-`inject.js` commence actuellement par `var DEBUG = true;` — diagnostic en cours sur la clé
-`usage`. Les logs sortent dans la console de **la page claude.ai**, pas celle du popup :
-`[usage] tap start`, `[usage] message_limit extrait…`, puis `[usage] tap end … | message_limit
-trouvés: N`. Un `tap start` sans `message_limit` derrière dit que le flux ne porte pas
-l'événement là où on le cherche ; aucun `tap start` du tout dit que le patch `fetch` ne voit
-pas la requête.
+**L'usage se diagnostique depuis la console du service worker** (`chrome://extensions` →
+*service worker*). Messages possibles, du plus fréquent au plus rare :
+
+| Message | Ce que ça veut dire |
+| --- | --- |
+| `HTTP 404` | `USAGE_PATH` est faux — il reste à capturer l'URL réelle |
+| `format de réponse inconnu … JSON reçu :` | l'URL est bonne, il ne manque que le mapping dans `parseUsage()` |
+| `fetch direct échoue (HTTP 403) : repli sur un onglet claude.ai` | normal, le repli prend la main |
+| `aucun onglet claude.ai ouvert` | l'API refuse le SW et il n'y a pas de relais disponible |
+| `aucun onglet claude.ai ne répond` | l'onglet est antérieur au chargement de l'extension → le recharger |
+
+`inject.js` a un `var DEBUG = false;` en tête — le passer à `true` fait sortir `[usage] tap
+start` / `tap end` dans la console de **la page claude.ai**. Ça ne concerne plus que
+l'estimation de contexte.
 
 > **Après avoir rechargé l'extension, recharger aussi l'onglet claude.ai.** Sinon les content
-> scripts de l'onglet sont orphelins : ils reçoivent encore les messages mais ne peuvent plus
-> rien écrire. `content.js` le signale désormais par un `console.error` explicite, au lieu de
-> l'abandon silencieux qui a rendu cette panne indiagnosticable.
+> scripts de l'onglet sont orphelins et le relais de secours ne répond plus (le service
+> worker le signale explicitement).
 
 Pour tester les états dégradés sans attendre une vraie limite, depuis la console du service
 worker (`chrome://extensions` → *service worker*) :
@@ -177,8 +224,11 @@ chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
   tout `fetch` émis depuis un worker par claude.ai serait invisible. Aucune parade.
 - **Le canal `postMessage` n'est pas privé.** La page peut lire ces messages, et toute autre
   extension à content script MAIN sur claude.ai aussi.
-- **Les endpoints internes de claude.ai ne sont pas stables.** Si le format change, les deux
-  points à corriger sont les regex d'URL en tête de `inject.js` et la lecture de
-  `data.windows` dans `background.js` / `popup.js`.
-- L'usage n'est mis à jour qu'**à la fin d'un message envoyé** : c'est la seule occasion où
-  claude.ai transmet `message_limit`. Le popup affiche l'âge de la valeur.
+- **Les endpoints internes de claude.ai ne sont pas stables.** Si le format d'usage change, il
+  n'y a que `usage-source.js` à corriger. Pour l'estimation de contexte, ce sont les regex
+  d'URL en tête de `inject.js`.
+- **L'endpoint d'usage n'est pas encore vérifié** — voir la section dédiée en haut.
+- **Un compte multi-organisations prend la première** retournée par l'API, qui n'est pas
+  forcément l'active. À affiner dans `pickOrgId()` si le cas se présente.
+- Le sondage tourne à **1/minute**, plancher de `chrome.alarms` : une consommation faite en
+  quelques secondes n'apparaît qu'au sondage suivant. Le popup affiche l'âge de la valeur.

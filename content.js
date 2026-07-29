@@ -1,42 +1,33 @@
-// Monde isole, document_start. Pont entre inject.js (monde MAIN) et chrome.storage.
-// Ne traite que l'usage : la cle "usage" est ecrasee a chaque nouvel evenement
-// message_limit. Le service worker reagit ensuite via chrome.storage.onChanged.
-// L'estimation de contexte est geree separement par context-estimator.js.
+// Monde isole, document_start. Relais de secours pour le sondage d'usage : quand le fetch
+// emis depuis le service worker est refuse (401/403 — il ne porte pas d'origine claude.ai),
+// le worker demande a cet onglet de refaire l'appel. Ici on est sur la page claude.ai, donc
+// le fetch est same-origin : cookies, Origin et Referer sont ceux que l'API attend.
+//
+// Ce fichier ne touche plus a chrome.storage : la cle "usage" n'a qu'un seul auteur, le
+// service worker. L'estimation de contexte est geree separement par context-estimator.js.
 (function () {
   'use strict';
 
-  var MAGIC = '__claude_usage_v1__';
+  chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
+    if (!msg || msg.kind !== 'fetchUsage' || typeof msg.url !== 'string') return;
 
-  // Apres un rechargement de l'extension, le patch MAIN survit mais les handles chrome.*
-  // sont morts et tout jette en silence.
-  function alive() {
-    try { return !!(chrome.runtime && chrome.runtime.id); } catch (e) { return false; }
-  }
-
-  window.addEventListener('message', function (event) {
-    if (event.source !== window) return;          // bloque les iframes
-    if (event.origin !== location.origin) return;
-    var d = event.data;
-    if (!d || typeof d !== 'object') return;
-    if (d.__cu !== MAGIC) return;
-    if (d.kind !== 'limit' || !d.data) return;
-
-    // Panne silencieuse la plus courante : l'extension a ete rechargee sans que l'onglet le
-    // soit. Le patch MAIN continue d'emettre, mais plus rien ne peut etre ecrit.
-    if (!alive()) {
-      console.error('[usage] contexte d\'extension invalide : message_limit recu mais non ' +
-                    'enregistre. Rechargez l\'onglet claude.ai.');
-      return;
-    }
-
-    try {
-      chrome.storage.local.set({
-        usage: { data: d.data, updatedAt: Date.now() }
-      }).catch(function (e) {
-        console.error('[usage] ecriture de la cle "usage" echouee :', e);
+    fetch(msg.url, {
+      credentials: 'include',
+      headers: { accept: 'application/json' }
+    }).then(function (res) {
+      if (!res.ok) {
+        // Le statut remonte au worker : c'est lui qui decide d'invalider l'uuid
+        // d'organisation en cache plutot que de resonder dans le vide.
+        sendResponse({ ok: false, error: 'HTTP ' + res.status, status: res.status });
+        return;
+      }
+      return res.json().then(function (json) {
+        sendResponse({ ok: true, json: json });
       });
-    } catch (e) {
-      console.error('[usage] ecriture de la cle "usage" impossible :', e);
-    }
+    }).catch(function (e) {
+      sendResponse({ ok: false, error: String((e && e.message) || e) });
+    });
+
+    return true;   // reponse asynchrone : garde le canal ouvert
   });
 })();

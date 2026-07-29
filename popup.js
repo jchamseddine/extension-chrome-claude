@@ -1,8 +1,7 @@
-// Popup : rend la derniere valeur connue de message_limit stockee sous la cle "usage",
-// une projection du moment ou la fenetre 5h atteindrait 100 %, et le reglage des
-// notifications de seuil.
-// Ne lit que "windows" de message_limit ; l'objet est stocke entier, donc
-// representativeClaim et resolved restent disponibles pour un usage futur.
+// Popup : rend le dernier sondage d'usage stocke sous la cle "usage", une projection du
+// moment ou la fenetre 5h atteindrait 100 %, et le reglage des notifications de seuil.
+// Ne lit que "windows" ; parseUsage() recopie aussi representativeClaim et resolved quand
+// l'API les fournit, ils restent donc disponibles pour un usage futur.
 'use strict';
 
 var WINDOWS = [
@@ -127,7 +126,7 @@ function renderProjection(history, w5) {
   var p = project(history, w5);
 
   if (!p.enough) {
-    el.textContent = "Pas assez de données pour estimer le rythme (3 messages minimum sur les 30 dernières minutes).";
+    el.textContent = "Pas assez de données pour estimer le rythme (il faut 3 minutes de sondage).";
     el.hidden = false;
     return;
   }

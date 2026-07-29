@@ -1,9 +1,10 @@
-// Monde MAIN, document_start. Patche fetch pour observer deux choses sur claude.ai :
-//   - l'evenement SSE "message_limit" du flux /chat_conversations/<uuid>/completion
-//     (usage session 5h et hebdo 7j) ;
-//   - de quoi estimer la taille du contexte : longueur du GET de conversation (base),
-//     du payload envoye, et du texte streame en reponse (increments).
+// Monde MAIN, document_start. Patche fetch pour estimer la taille du contexte : longueur du
+// GET de conversation (base), du payload envoye, et du texte streame en reponse (increments).
 // Tout est transmis au monde isole par postMessage ; ce fichier n'ecrit jamais en storage.
+//
+// L'usage (5h / 7j) ne passe plus par ici : il est sonde directement par le service worker.
+// L'evenement SSE "message_limit" n'arrivait qu'apres l'envoi d'un message, ce qui rendait la
+// donnee vieille des qu'on ne discutait pas.
 //
 // REGLE D'OR : ce fichier ne doit jamais casser claude.ai. Tout chemin de capture est dans
 // un try/catch, et la valeur de retour des fonctions patchees ne depend jamais du succes
@@ -16,19 +17,16 @@
     Object.defineProperty(window, '__claudeUsageV1', { value: true });
   } catch (e) { /* pas grave */ }
 
-  // Active pour le diagnostic de la cle "usage" jamais ecrite. A repasser a false une fois
-  // la donnee confirmee dans chrome.storage.local.
-  var DEBUG = true;
+  var DEBUG = false;
 
   var MAGIC = '__claude_usage_v1__';
   var SSE_BYTE_BUDGET = 4e6;
   var SSE_MS_BUDGET = 120000;
   var SSE_LINE_MAX = 64 * 1024;
 
-  // Detection sur la ligne brute, comme la Phase 1 (qui, elle, captait bien message_limit).
-  // Surtout PAS de contrainte sur un prefixe "data:" : une donnee SSE peut etre repartie sur
-  // plusieurs lignes, arriver avec du padding, ou sans prefixe du tout.
-  var LIMIT_RE = /"type"\s*:\s*"message_limit"/;
+  // Detection sur la ligne brute. Surtout PAS de contrainte sur un prefixe "data:" : une
+  // donnee SSE peut etre repartie sur plusieurs lignes, arriver avec du padding, ou sans
+  // prefixe du tout.
   var DELTA_RE = /"type"\s*:\s*"content_block_delta"/;
 
   // Teste sur le pathname : l'URL reelle est
@@ -103,7 +101,7 @@
 
   // Tap SSE borne. Aucune E/S dans la boucle de lecture (le tee() cale sa contre-pression
   // sur la branche la plus lente : un postMessage par delta ferait saccader le rendu de
-  // claude.ai). On n'emet que sur "message_limit" et une seule fois a la sortie du flux.
+  // claude.ai). On accumule, et on n'emet qu'une fois, a la sortie du flux.
   function tapEventStream(hit, res) {
     var clone, reader;
     try { clone = res.clone(); } catch (e) {
@@ -123,8 +121,8 @@
     var carry = '';
     var bytes = 0;
     var replyChars = 0;
-    var lines = 0;      // jalons de diagnostic : "aucun log" doit pouvoir se distinguer
-    var limits = 0;     // de "le tap tourne mais ne matche rien"
+    var lines = 0;      // jalon de diagnostic : "aucun log" doit pouvoir se distinguer de
+                        // "le tap tourne mais ne matche rien"
 
     // Le JSON commence au premier '{' : tolere "data:", "data: ", du padding, ou l'absence
     // de prefixe. L'offset 5 code en dur de la version precedente n'admettait que "data:".
@@ -143,27 +141,6 @@
           var t = d && (d.text || d.thinking);
           if (typeof t === 'string') replyChars += t.length;
         } catch (e) { /* pas grave : un delta perdu ne fausse l'estimation qu'a la marge */ }
-        return;
-      }
-
-      if (LIMIT_RE.test(line)) {
-        var o;
-        try {
-          o = payloadOf(line);
-        } catch (e) {
-          // Ne plus jamais jeter en silence : c'est ce qui a rendu cette panne indiagnosticable.
-          console.warn('[usage] message_limit repere mais JSON illisible :', e.message,
-                       '| debut de ligne :', line.slice(0, 200));
-          return;
-        }
-        if (o && o.type === 'message_limit' && o.message_limit) {
-          limits++;
-          if (DEBUG) console.log('[usage] message_limit extrait, envoi vers content.js',
-                                 o.message_limit);
-          emit({ kind: 'limit', data: o.message_limit });
-        } else if (DEBUG) {
-          console.warn('[usage] ligne message_limit sans charge utile exploitable', o);
-        }
       }
     }
 
@@ -191,12 +168,8 @@
 
       emit({ kind: 'reply', uuid: hit.uuid, chars: replyChars });
       if (DEBUG) {
-        console.log('[usage] tap end', end, '| lignes:', lines, '| message_limit trouves:',
-                    limits, '| reponse:', replyChars, 'caracteres');
-        if (!limits) {
-          console.warn('[usage] aucun message_limit dans ce flux : la cle "usage" ne sera ' +
-                       'pas ecrite. Verifier le format reel des lignes SSE.');
-        }
+        console.log('[usage] tap end', end, '| lignes:', lines, '| reponse:', replyChars,
+                    'caracteres');
       }
     }
 

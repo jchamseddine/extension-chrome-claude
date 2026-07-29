@@ -1,11 +1,16 @@
-// Service worker. Seule source de verite pour l'apparence de l'icone de toolbar, pour
-// l'historique roulant d'usage, et pour les notifications de seuil.
-// Il ne fait aucun reseau : il reagit aux ecritures de content.js sur la cle "usage"
-// (chrome.storage.onChanged) et redessine deux anneaux concentriques sur un OffscreenCanvas
-// — exterieur = fenetre 7j, interieur = fenetre 5h — plus le badge texte du % 5h.
+// Service worker. Seule source de verite pour l'usage : il interroge l'API de claude.ai
+// toutes les minutes (chrome.alarms) et ecrit la cle "usage". Il tient aussi l'historique
+// roulant, les notifications de seuil, et l'apparence de l'icone de toolbar — deux anneaux
+// concentriques dessines sur un OffscreenCanvas, exterieur = fenetre 7j, interieur = 5h,
+// plus le badge texte du % 5h.
+//
+// L'icone, l'historique et les notifications restent branches sur chrome.storage.onChanged :
+// l'evenement se declenche aussi dans le contexte qui a ecrit, donc le sondage n'a rien a
+// appeler directement.
 'use strict';
 
-importScripts('common.js');   // utilOf(), colorFor(), resetText(), USAGE_LABELS
+importScripts('common.js');        // utilOf(), colorFor(), resetText(), USAGE_LABELS
+importScripts('usage-source.js');  // usageUrl(), orgsUrl(), pickOrgId(), parseUsage()
 
 var TRACK = 'rgba(128,128,128,0.30)';
 
@@ -13,6 +18,9 @@ var TRACK = 'rgba(128,128,128,0.30)';
 var THRESHOLDS = [95, 90, 75];
 var HISTORY_MAX = 50;
 var NOTIFY_ICON_SIZE = 128;
+
+var ALARM = 'usage-poll';
+var POLL_MINUTES = 1;   // plancher impose par chrome.alarms
 
 // Les lectures-modifications-ecritures de "usageHistory" et "notifyState" sont serialisees :
 // deux onglets claude.ai peuvent ecrire "usage" a quelques millisecondes d'intervalle et se
@@ -77,8 +85,10 @@ function render() {
 
 // ---- historique roulant ------------------------------------------------------
 
-// Un point par evenement message_limit. Sert au popup a projeter le moment ou la fenetre
-// 5h atteindrait 100 %. Cape a HISTORY_MAX : on jette toujours les plus anciens.
+// Un point par sondage, donc une serie reguliere a 1 point/minute — c'est ce qui donne du
+// sens a la regression lineaire du popup. Sert a projeter le moment ou la fenetre 5h
+// atteindrait 100 %. Cape a HISTORY_MAX : 50 points = 50 min, la fenetre d'ajustement du
+// popup en couvre 30.
 function recordHistory(data) {
   var windows = data.windows || {};
   var point = {
@@ -202,6 +212,102 @@ function maybeNotify(data) {
   });
 }
 
+// ---- sondage de l'API --------------------------------------------------------
+
+// Le service worker n'a pas d'origine claude.ai : credentials:'include' envoie bien les
+// cookies de session, mais rien ne garantit que l'API accepte une requete sans les
+// Origin/Referer qu'elle attend. On tente donc d'abord depuis ici — ca marche onglet ferme —
+// et on se rabat sur un onglet claude.ai ouvert, ou le fetch est same-origin.
+function fetchJson(url) {
+  return fetch(url, {
+    credentials: 'include',
+    headers: { accept: 'application/json' }
+  }).then(function (res) {
+    if (!res.ok) {
+      var e = new Error('HTTP ' + res.status);
+      e.status = res.status;
+      throw e;
+    }
+    return res.json();
+  });
+}
+
+// Les onglets charges avant l'installation ou le rechargement de l'extension n'ont pas de
+// content script vivant : leur sendMessage rejette. On essaie donc les onglets a la suite.
+function askTabs(tabs, url, i, lastErr) {
+  if (i >= tabs.length) {
+    throw new Error(lastErr || 'aucun onglet claude.ai ne repond (recharger l\'onglet)');
+  }
+  return chrome.tabs.sendMessage(tabs[i].id, { kind: 'fetchUsage', url: url })
+    .then(function (r) {
+      if (r && r.ok) return r.json;
+      var e = new Error((r && r.error) || 'reponse vide');
+      if (r && r.status) e.status = r.status;
+      throw e;
+    })
+    .catch(function (e) {
+      // Un refus HTTP se reproduira a l'identique sur les autres onglets : inutile d'insister.
+      if (e && e.status) throw e;
+      return askTabs(tabs, url, i + 1, String((e && e.message) || e));
+    });
+}
+
+function fetchViaTab(url) {
+  return chrome.tabs.query({ url: ['https://claude.ai/*', 'https://*.claude.ai/*'] })
+    .then(function (tabs) {
+      if (!tabs.length) throw new Error('aucun onglet claude.ai ouvert');
+      return askTabs(tabs, url, 0, null);
+    });
+}
+
+// Un 404 dit que l'URL est fausse : le repli ne ferait que produire le meme 404 depuis
+// l'onglet. On ne se rabat que sur ce qui peut vraiment tenir a l'origine de l'appelant.
+function getJson(url) {
+  return fetchJson(url).catch(function (e) {
+    if (e && e.status && e.status !== 401 && e.status !== 403) throw e;
+    console.warn('[usage] fetch direct echoue (' + ((e && e.message) || e) +
+                 ') : repli sur un onglet claude.ai');
+    return fetchViaTab(url);
+  });
+}
+
+// L'uuid d'organisation ne change jamais en pratique : on le met en cache pour ne pas payer
+// une requete de plus a chaque sondage (le worker meurt entre deux alarmes, un cache memoire
+// ne survivrait pas).
+function resolveOrg() {
+  if (!usageNeedsOrg()) return Promise.resolve(null);
+
+  return chrome.storage.local.get('orgId').then(function (o) {
+    if (o.orgId) return o.orgId;
+    return getJson(orgsUrl()).then(function (json) {
+      var id = pickOrgId(json);
+      if (!id) throw new Error('aucun uuid d\'organisation dans la reponse de ' + orgsUrl());
+      return chrome.storage.local.set({ orgId: id }).then(function () { return id; });
+    });
+  });
+}
+
+function pollUsage() {
+  return resolveOrg()
+    .then(function (org) { return getJson(usageUrl(org)); })
+    .then(function (json) {
+      var data = parseUsage(json);
+      if (!data) return;   // parseUsage a deja dit en console ce qui manque
+
+      // Ecrit a chaque sondage meme si rien n'a bouge : "updatedAt" doit refleter la
+      // fraicheur reelle de la donnee, et usageHistory a besoin d'un echantillonnage regulier.
+      return chrome.storage.local.set({ usage: { data: data, updatedAt: Date.now() } });
+    })
+    .catch(function (e) {
+      console.warn('[usage] sondage echoue :', (e && e.message) || e);
+      // Un uuid d'organisation perime rendrait le sondage muet pour toujours : on le jette
+      // pour que le prochain reveil le redemande.
+      if (e && (e.status === 401 || e.status === 403 || e.status === 404)) {
+        return chrome.storage.local.remove('orgId').catch(function () {});
+      }
+    });
+}
+
 // ---- declencheurs ------------------------------------------------------------
 
 chrome.storage.onChanged.addListener(function (changes, area) {
@@ -216,8 +322,22 @@ chrome.storage.onChanged.addListener(function (changes, area) {
     .catch(function (e) { console.warn('[usage]', e); });
 });
 
+chrome.alarms.onAlarm.addListener(function (a) {
+  if (a.name === ALARM) pollUsage();
+});
+
+// Le service worker est detruit et relance en permanence ; ce code de premier niveau
+// rejoue donc a chaque reveil. chrome.alarms.create remet le compte a zero, ce qui
+// repousserait le sondage indefiniment : on ne cree que si l'alarme manque.
+chrome.alarms.get(ALARM).then(function (a) {
+  if (!a) chrome.alarms.create(ALARM, { periodInMinutes: POLL_MINUTES });
+}, function () { /* pas grave */ });
+
 // setIcon ne survit pas au redemarrage de Chrome : il faut redessiner au demarrage.
-chrome.runtime.onStartup.addListener(render);
+chrome.runtime.onStartup.addListener(function () {
+  render();
+  pollUsage();   // ne pas attendre la premiere alarme pour avoir une donnee a afficher
+});
 
 chrome.runtime.onInstalled.addListener(function () {
   // Cles orphelines : captures de la Phase 1 (sniffer), et "context" d'avant la
@@ -229,4 +349,5 @@ chrome.runtime.onInstalled.addListener(function () {
     if (stale.length) chrome.storage.local.remove(stale).catch(function () {});
   }, function () {});
   render();
+  pollUsage();
 });
