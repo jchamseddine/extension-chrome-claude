@@ -179,8 +179,9 @@ function evaluate(data, state) {
     state.windows[key] = st;
   });
 
-  // Champ jamais observe dans nos captures : lu aux deux emplacements plausibles, et
-  // simplement ignore s'il n'existe pas.
+  // Vestige de l'ancien flux SSE : ce champ n'existe pas dans la reponse reelle de
+  // /organizations/<org>/usage (elle porte extra_usage/spend a la place, pas encore cables
+  // ici — voir usage-source.js). Laisse en l'etat, sans effet tant que rien ne le peuple.
   var overage = !!(data.overageInUse || (data.resolved && data.resolved.overageInUse));
   if (overage && !state.overage) {
     msgs.push({

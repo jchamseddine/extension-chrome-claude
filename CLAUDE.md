@@ -21,10 +21,14 @@ Deux sources de données, volontairement séparées :
 - **Estimation de contexte** — toujours passive, via le patch `fetch` de `inject.js` (taille du
   GET de conversation + payloads envoyés + texte streamé). Aucun appel réseau émis.
 
-⚠️ **L'endpoint d'usage n'est pas vérifié.** `USAGE_PATH` et `parseUsage()` dans
-`usage-source.js` sont des suppositions : la capture réseau de
-`https://claude.ai/new#settings/usage` n'a jamais été fournie. C'est le seul fichier à corriger
-une fois la vraie requête connue — voir la section dédiée du README.
+`USAGE_PATH` (`GET /api/organizations/<org>/usage`) et `parseUsage()` dans `usage-source.js`
+sont **confirmés** par capture réseau — voir le README pour la forme réelle de la réponse et
+le piège d'unité (`utilization`/`percent` en 0-100, pas en fraction 0-1). Testé par
+`node test-usage-source.js`.
+
+⚠️ **`ORGS_PATH` reste une supposition** : la requête qui liste les organisations n'a jamais
+été capturée — voir la section dédiée du README si le sondage échoue avant même d'atteindre
+`.../usage`.
 
 ## Contraintes techniques
 

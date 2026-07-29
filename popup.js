@@ -1,7 +1,7 @@
 // Popup : rend le dernier sondage d'usage stocke sous la cle "usage", une projection du
 // moment ou la fenetre 5h atteindrait 100 %, et le reglage des notifications de seuil.
-// Ne lit que "windows" ; parseUsage() recopie aussi representativeClaim et resolved quand
-// l'API les fournit, ils restent donc disponibles pour un usage futur.
+// Ne lit que "windows" ; c'est la seule partie de la reponse d'usage que parseUsage()
+// normalise (voir usage-source.js).
 'use strict';
 
 var WINDOWS = [

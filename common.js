@@ -44,8 +44,8 @@ function untilText(ms) {
   return ' (dans ' + Math.round(h / 24) + ' j)';
 }
 
-// windows.*.resets_at est en SECONDES Unix (resolved.limit.resets_at, lui, est une chaine
-// ISO 8601 — ne pas confondre les deux).
+// windows.*.resets_at est toujours en SECONDES Unix : la reponse d'usage arrive en ISO 8601,
+// mais toEpochSeconds() (usage-source.js) fait la conversion avant l'ecriture en storage.
 function resetText(sec, withDay) {
   if (typeof sec !== 'number' || !isFinite(sec)) return '';
   var d = new Date(sec * 1000);
