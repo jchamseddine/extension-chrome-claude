@@ -5,13 +5,15 @@ Extension Chrome personnelle (Manifest V3, JS vanilla, aucun build step). Elle a
 1. l'usage **session (5 h)** et **hebdomadaire (7 j)** de claude.ai — icône à deux anneaux,
    badge, popup ;
 2. une **estimation** de la taille du contexte de la conversation ouverte, en pastille sur
-   la page.
+   la page ;
+3. le **statut de Claude** lu sur `status.claude.com` (claude.ai, Claude Code, API…), en
+   section du popup.
 
 Elle permet aussi de **personnaliser le thème** de claude.ai (couleur d'accent, poids de
-police, coins et ombres, police de lecture), fonctionnalité totalement indépendante des deux
+police, coins et ombres, police de lecture), fonctionnalité totalement indépendante des
 précédentes.
 
-Rien ne sort de la machine, sauf vers claude.ai lui-même : tout est dans
+Rien ne sort de la machine, sauf vers claude.ai et status.claude.com : tout est dans
 `chrome.storage.local`, aucun serveur tiers.
 
 ## Installation
@@ -48,13 +50,17 @@ valeur connue.
 L'estimation de contexte, elle, n'émet toujours **aucun** appel : elle observe les réponses
 que claude.ai reçoit déjà.
 
+Le statut vient d'une source à part, sur un autre domaine et sans authentification — voir
+[Statut de Claude](#statut-de-claude) plus bas.
+
 | URL (pathname) | Ce qu'on en tire |
 | --- | --- |
 | `…/organizations/<org>/usage` | `utilization` (0-100) et `resets_at` des fenêtres 5 h et 7 j, `severity` par fenêtre |
 | `…/chat_conversations/<uuid>/completion` (SSE) | la longueur du texte streamé |
 | `…/chat_conversations/<uuid>` (GET JSON) | la longueur de l'historique complet |
+| `status.claude.com/api/v2/summary.json` | l'indicateur global, l'état des composants Claude, l'incident en cours |
 
-Réponse réelle (capturée le 2026-07-29), simplifiée :
+Réponse réelle de l'API d'usage (capturée le 2026-07-29), simplifiée :
 
 ```json
 {
@@ -93,6 +99,59 @@ réelle ci-dessus en cas de test principal.
 `overageInUse`, jamais observé non plus. À câbler dans `evaluate()` de `background.js` si ce
 point redevient utile.
 
+### Statut de Claude
+
+Troisième source, **totalement indépendante** des deux autres : autre domaine, endpoint public
+(aucun cookie utile), rien de partagé en storage, et elle ne touche ni l'icône, ni l'historique,
+ni les notifications. Sondée toutes les **5 min** par l'alarme `status-poll` — le statut bouge
+rarement, inutile de solliciter la page au rythme de l'usage.
+
+`status.claude.com` est un **Statuspage** (Atlassian) : son API v2 est publique et non
+authentifiée. On prend `summary.json` et pas `status.json`, parce qu'une seule requête donne
+l'indicateur global, les composants **et** les incidents. Réponse réelle (capturée le
+2026-07-30, un incident était actif), simplifiée :
+
+```json
+{
+  "status": { "indicator": "minor", "description": "Minor Service Outage" },
+  "components": [
+    { "name": "claude.ai",                     "status": "partial_outage", "group": false },
+    { "name": "Claude Console (platform.claude.com)", "status": "operational", "group": false },
+    { "name": "Claude API (api.anthropic.com)", "status": "partial_outage", "group": false },
+    { "name": "Claude Code",                   "status": "partial_outage", "group": false },
+    { "name": "Claude Cowork",                 "status": "partial_outage", "group": false },
+    { "name": "Claude for Government",         "status": "operational",    "group": false }
+  ],
+  "incidents": [
+    { "name": "Elevated errors across many models", "impact": "major", "resolved_at": null }
+  ]
+}
+```
+
+`parseStatus()` (dans [`status-source.js`](status-source.js)) normalise ça en
+`{ level, components: [{ name, level, status }], incident? }`, `level` valant
+`operational` / `degraded` / `outage`. Deux points que cette capture impose :
+
+- **`status.indicator` peut sous-estimer la réalité** : il annonce `minor` alors que quatre
+  composants sont en `partial_outage` et que l'incident est d'impact `major`. Le niveau global
+  est donc le **pire de (indicateur, composants retenus)**, jamais l'indicateur seul.
+- **Le filtre « nom contenant *claude* » ne retire rien aujourd'hui** : les six noms le
+  contiennent. Il n'est là que pour écarter un composant étranger si Atlassian en ajoute un.
+
+Un statut de composant inconnu — ou absent — donne `degraded`, pas `operational` : pour un
+afficheur de panne, une fausse alerte qui envoie voir status.claude.com coûte moins cher qu'un
+« tout va bien » affiché pendant une panne. La valeur brute est conservée à côté de `level`
+pour rester diagnosticable. `status.description` n'est pas repris (anglais, et redondant avec
+`level`) : le popup a ses propres libellés. Couvert par
+[`test-status-source.js`](test-status-source.js) (`node test-status-source.js`), avec la capture
+ci-dessus en cas de test principal.
+
+Côté popup, la section « Statut » se réduit à **une ligne** quand tout est nominal (« Tous les
+systèmes opérationnels ») et ne détaille que les composants hors état nominal, précédés du titre
+de l'incident quand il y en a un. Un lien ouvre `status.claude.com` dans un nouvel onglet pour
+le détail complet. Elle réutilise la palette de `common.js` mais **pas** `colorFor()`, qui
+attend un objet fenêtre d'usage.
+
 ## Architecture
 
 | Fichier | Monde | Rôle |
@@ -101,14 +160,16 @@ point redevient utile.
 | `content.js` | isolé | relais de secours : refait le fetch d'usage same-origin quand le SW est refusé |
 | `context-estimator.js` | isolé | tient l'estimation de contexte par conversation et affiche la pastille sur `/chat/*` |
 | `theme.js` | isolé | surcharge les tokens de thème du site — **indépendant du reste** |
-| `background.js` | service worker | sonde l'API toutes les 60 s, écrit `usage`, dessine l'icône, notifie |
-| `usage-source.js` | SW | **seul** point d'adaptation à l'API : URL + `parseUsage()` |
+| `background.js` | service worker | sonde les deux API (usage 60 s, statut 5 min), écrit `usage` et `status`, dessine l'icône, notifie |
+| `usage-source.js` | SW | **seul** point d'adaptation à l'API d'usage : URL + `parseUsage()` |
+| `status-source.js` | SW | **seul** point d'adaptation à status.claude.com : URL + `parseStatus()` — **indépendant du reste** |
 | `common.js` | SW + popup | seuils de couleur partagés (`utilOf`, `colorFor`) |
-| `popup.html` / `popup.js` | popup | les deux fenêtres, leur reset et leur statut |
+| `popup.html` / `popup.js` | popup | les deux fenêtres d'usage, la projection, la section « Statut », les réglages |
 
 Clés `chrome.storage.local` :
 
 - `usage` = `{ data, updatedAt }` — clé unique, réécrite **à chaque sondage** même si rien n'a bougé
+- `status` = `{ data, updatedAt }` — statut de status.claude.com, réécrite à chaque sondage
 - `orgId` = uuid d'organisation mis en cache, invalidé sur 401/403/404
 - `ctx:<uuid>` = `{ chars, tokens, updatedAt }` — une clé par conversation, LRU 20
 - `usageHistory` = `[{ t, u5, u7 }, …]` — historique roulant, 50 points max
@@ -119,8 +180,13 @@ Clés `chrome.storage.local` :
 
 ### Sondage
 
-Une alarme `usage-poll` à `periodInMinutes: 1` (le plancher de `chrome.alarms`), plus un
-sondage immédiat sur `onStartup` et `onInstalled` pour ne pas attendre la première alarme.
+Deux alarmes indépendantes : `usage-poll` à `periodInMinutes: 1` (le plancher de
+`chrome.alarms`) et `status-poll` à 5 min, plus un sondage immédiat de chacune sur `onStartup`
+et `onInstalled` pour ne pas attendre la première alarme.
+
+Le sondage du statut appelle `fetchJson()` directement, **pas** `getJson()` : le repli sur un
+onglet claude.ai n'aurait aucun sens pour un endpoint public d'un autre domaine, et ses
+avertissements `[usage]` seraient trompeurs.
 
 Le service worker étant détruit et relancé en permanence, le code de premier niveau rejoue à
 chaque réveil : l'alarme n'est (re)créée que si `chrome.alarms.get` la trouve absente —
@@ -326,6 +392,8 @@ chaîne confirmée ci-dessus.
 | `fetch direct échoue (HTTP 403) : repli sur un onglet claude.ai` | normal, le repli prend la main |
 | `aucun onglet claude.ai ouvert` | l'API refuse le SW et il n'y a pas de relais disponible |
 | `aucun onglet claude.ai ne répond` | l'onglet est antérieur au chargement de l'extension → le recharger |
+| `[status] sondage échoue :` | status.claude.com est injoignable — le popup masque simplement la section |
+| `[status] format de réponse inconnu … JSON reçu :` | Statuspage a changé de forme — corriger `parseStatus()`, avec un test dans `test-status-source.js` |
 
 `inject.js` a un `var DEBUG = false;` en tête — le passer à `true` fait sortir `[usage] tap
 start` / `tap end` dans la console de **la page claude.ai**. Ça ne concerne plus que
@@ -345,6 +413,19 @@ chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
 } } } });
 ```
 
+Même méthode pour la section « Statut », qui est le plus souvent verte :
+
+```js
+chrome.storage.local.set({ status: { updatedAt: Date.now(), data: {
+  level: 'outage',
+  incident: { name: 'Elevated errors across many models', impact: 'major' },
+  components: [
+    { name: 'claude.ai',   level: 'outage',   status: 'partial_outage' },
+    { name: 'Claude Code', level: 'degraded', status: 'degraded_performance' }
+  ]
+} } });
+```
+
 ## Limites connues
 
 - **Web/Service Workers = angle mort.** Un content script ne s'exécute pas dans les workers ;
@@ -353,7 +434,10 @@ chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
   extension à content script MAIN sur claude.ai aussi.
 - **Les endpoints internes de claude.ai ne sont pas stables.** Si le format d'usage change, il
   n'y a que `usage-source.js` à corriger (et `test-usage-source.js` à mettre à jour). Pour
-  l'estimation de contexte, ce sont les regex d'URL en tête de `inject.js`.
+  l'estimation de contexte, ce sont les regex d'URL en tête de `inject.js`. L'API Statuspage,
+  elle, est une API publique documentée : c'est la plus stable des trois.
+- **Le statut est vieux de 5 min au pire.** Le début d'un incident n'apparaît donc pas
+  instantanément ; le lien vers status.claude.com est là pour ça.
 - **`ORGS_PATH` n'est pas encore vérifié** — voir la section dédiée en haut.
 - **`severity` → `over_limit` est une extrapolation.** Seules `"warning"` et `"normal"` ont
   été observées ; à corriger dans `statusFromSeverity()` si claude.ai utilise un autre mot

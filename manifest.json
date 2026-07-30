@@ -5,7 +5,7 @@
   "description": "Affiche l'usage de session (5h) et hebdomadaire (7j) de claude.ai, plus une estimation du contexte de la conversation en cours.",
   "minimum_chrome_version": "111",
   "permissions": ["storage", "notifications", "alarms"],
-  "host_permissions": ["https://claude.ai/*", "https://*.claude.ai/*"],
+  "host_permissions": ["https://claude.ai/*", "https://*.claude.ai/*", "https://status.claude.com/*"],
   "background": {
     "service_worker": "background.js"
   },

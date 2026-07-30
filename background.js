@@ -11,6 +11,7 @@
 
 importScripts('common.js');        // utilOf(), colorFor(), resetText(), USAGE_LABELS
 importScripts('usage-source.js');  // usageUrl(), orgsUrl(), pickOrgId(), parseUsage()
+importScripts('status-source.js'); // STATUS_URL, parseStatus()
 
 var TRACK = 'rgba(128,128,128,0.30)';
 
@@ -21,6 +22,10 @@ var NOTIFY_ICON_SIZE = 128;
 
 var ALARM = 'usage-poll';
 var POLL_MINUTES = 1;   // plancher impose par chrome.alarms
+
+// Le statut bouge rarement : inutile de solliciter status.claude.com au rythme de l'usage.
+var STATUS_ALARM = 'status-poll';
+var STATUS_POLL_MINUTES = 5;
 
 // Les lectures-modifications-ecritures de "usageHistory" et "notifyState" sont serialisees :
 // deux onglets claude.ai peuvent ecrire "usage" a quelques millisecondes d'intervalle et se
@@ -309,6 +314,25 @@ function pollUsage() {
     });
 }
 
+// ---- sondage du statut -------------------------------------------------------
+
+// Source totalement independante de l'usage : autre domaine, endpoint public, et rien de
+// commun en storage. Elle ne touche ni l'icone, ni l'historique, ni les notifications.
+function pollStatus() {
+  // fetchJson() et pas getJson() : le repli sur un onglet claude.ai n'a aucun sens pour un
+  // endpoint public d'un autre domaine, et ses avertissements "[usage]" seraient trompeurs.
+  return fetchJson(STATUS_URL)
+    .then(function (json) {
+      var data = parseStatus(json);
+      if (!data) return;   // parseStatus a deja dit en console ce qui manque
+
+      return chrome.storage.local.set({ status: { data: data, updatedAt: Date.now() } });
+    })
+    .catch(function (e) {
+      console.warn('[status] sondage echoue :', (e && e.message) || e);
+    });
+}
+
 // ---- declencheurs ------------------------------------------------------------
 
 chrome.storage.onChanged.addListener(function (changes, area) {
@@ -325,6 +349,7 @@ chrome.storage.onChanged.addListener(function (changes, area) {
 
 chrome.alarms.onAlarm.addListener(function (a) {
   if (a.name === ALARM) pollUsage();
+  if (a.name === STATUS_ALARM) pollStatus();
 });
 
 // Le service worker est detruit et relance en permanence ; ce code de premier niveau
@@ -334,10 +359,15 @@ chrome.alarms.get(ALARM).then(function (a) {
   if (!a) chrome.alarms.create(ALARM, { periodInMinutes: POLL_MINUTES });
 }, function () { /* pas grave */ });
 
+chrome.alarms.get(STATUS_ALARM).then(function (a) {
+  if (!a) chrome.alarms.create(STATUS_ALARM, { periodInMinutes: STATUS_POLL_MINUTES });
+}, function () { /* pas grave */ });
+
 // setIcon ne survit pas au redemarrage de Chrome : il faut redessiner au demarrage.
 chrome.runtime.onStartup.addListener(function () {
   render();
   pollUsage();   // ne pas attendre la premiere alarme pour avoir une donnee a afficher
+  pollStatus();
 });
 
 chrome.runtime.onInstalled.addListener(function () {
@@ -351,4 +381,5 @@ chrome.runtime.onInstalled.addListener(function () {
   }, function () {});
   render();
   pollUsage();
+  pollStatus();
 });

@@ -1,7 +1,8 @@
 // Popup : rend le dernier sondage d'usage stocke sous la cle "usage", une projection du
-// moment ou la fenetre 5h atteindrait 100 %, le reglage des notifications de seuil et la
-// personnalisation du theme de claude.ai (cles "accentColor", "fontWeightPreset",
-// "radiusPreset" et "fontFamily", appliquees par theme.js).
+// moment ou la fenetre 5h atteindrait 100 %, le statut de status.claude.com (cle "status",
+// source independante), le reglage des notifications de seuil et la personnalisation du theme
+// de claude.ai (cles "accentColor", "fontWeightPreset", "radiusPreset" et "fontFamily",
+// appliquees par theme.js).
 // Ne lit que "windows" ; c'est la seule partie de la reponse d'usage que parseUsage()
 // normalise (voir usage-source.js).
 'use strict';
@@ -140,6 +141,70 @@ function renderProjection(history, w5) {
   el.hidden = false;
 }
 
+// ---- statut ------------------------------------------------------------------
+
+// On reutilise la palette de common.js pour rester coherent avec les jauges, mais PAS
+// colorFor() : il attend un objet fenetre d'usage, l'appeler ici obligerait a fabriquer un faux
+// { utilization } — exactement le couplage que la separation des sources evite.
+var LEVEL_COLOR = {
+  operational: USAGE_GREEN,
+  degraded: USAGE_ORANGE,
+  outage: USAGE_RED
+};
+
+var LEVEL_LABEL = {
+  operational: 'Tous les systèmes opérationnels',
+  degraded: 'Service dégradé',
+  outage: 'Panne en cours'
+};
+
+var COMPONENT_LABEL = {
+  operational: 'opérationnel',
+  degraded_performance: 'performances dégradées',
+  partial_outage: 'panne partielle',
+  major_outage: 'panne majeure',
+  under_maintenance: 'maintenance'
+};
+
+function dot(level) {
+  var d = node('span', 'dot');
+  d.style.background = LEVEL_COLOR[level] || USAGE_GREY;
+  return d;
+}
+
+// Section entierement masquee quand la cle "status" manque (premier lancement, sondage echoue) :
+// une section vide serait moins claire qu'une section absente.
+function renderStatus(stored) {
+  var data = stored && stored.data;
+  if (!data || !data.level) return;
+
+  var head = document.getElementById('statusHead');
+  head.appendChild(dot(data.level));
+  head.appendChild(node('span', null, LEVEL_LABEL[data.level] || data.level));
+
+  // Tout nominal : on s'arrete a la ligne compacte, inutile d'etaler six composants verts.
+  if (data.level !== 'operational') {
+    if (data.incident && data.incident.name) {
+      var inc = document.getElementById('statusIncident');
+      inc.textContent = data.incident.name;   // dit POURQUOI c'est degrade
+      inc.hidden = false;
+    }
+
+    var list = document.getElementById('statusList');
+    (data.components || []).forEach(function (c) {
+      if (c.level === 'operational') return;
+      var row = node('div', 'comp');
+      row.appendChild(dot(c.level));
+      // Un statut que Statuspage viendrait d'inventer est montre brut plutot que masque.
+      row.appendChild(node('span', null,
+        c.name + ' — ' + (COMPONENT_LABEL[c.status] || c.status || c.level)));
+      list.appendChild(row);
+    });
+  }
+
+  document.getElementById('status').hidden = false;
+}
+
 // ---- reglages ----------------------------------------------------------------
 
 function renderSettings(settings) {
@@ -222,9 +287,12 @@ function renderTheme(stored) {
 
 // ---- rendu -------------------------------------------------------------------
 
-chrome.storage.local.get(['usage', 'usageHistory', 'settings'].concat(THEME_KEYS)).then(function (o) {
+chrome.storage.local.get(['usage', 'usageHistory', 'settings', 'status'].concat(THEME_KEYS)).then(function (o) {
   renderSettings(o.settings);
   renderTheme(o);
+  // Avant le garde sur "windows" : sinon le statut disparaitrait precisement quand l'usage est
+  // indisponible, c'est-a-dire pendant une panne.
+  renderStatus(o.status);
 
   var usage = o.usage;
   var windows = (usage && usage.data && usage.data.windows) || null;
