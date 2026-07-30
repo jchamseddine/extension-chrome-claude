@@ -173,7 +173,7 @@ Clés `chrome.storage.local` :
 - `orgId` = uuid d'organisation mis en cache, invalidé sur 401/403/404
 - `ctx:<uuid>` = `{ chars, tokens, updatedAt }` — une clé par conversation, LRU 20
 - `usageHistory` = `[{ t, u5, u7 }, …]` — historique roulant, 50 points max
-- `notifyState` = `{ windows: { '5h': { threshold, overLimit }, … }, overage }` — anti-spam
+- `notifyState` = `{ windows: { '5h': { threshold, overLimit, notifiedReset }, … }, overage }` — anti-spam
 - `settings` = `{ notifications: false }` — réglages du popup
 - `accentColor`, `fontWeightPreset`, `radiusPreset`, `fontFamily` — personnalisation du thème,
   quatre clés de premier niveau ; **toutes absentes** = thème d'origine intact (voir plus bas)
@@ -204,10 +204,13 @@ orange < 90 %, rouge au-delà ; gris si la donnée manque). Le badge texte porte
 fenêtre 5 h. Aucun PNG n'est livré : le service worker dessine l'icône dès `onInstalled` et
 `onStartup`.
 
-### Notifications de seuil
+### Notifications
 
 **Désactivées par défaut** — la case à cocher est dans le popup, la préférence va dans
-`settings.notifications`.
+`settings.notifications`. Cette **unique** préférence gouverne toutes les notifications, seuils
+comme fin de reset.
+
+#### Seuils
 
 Trois seuils : **75 %**, **90 %**, **95 %**, évalués séparément sur chaque fenêtre. Le corps
 de la notification donne la fenêtre, le % courant et l'heure de reset en heure locale.
@@ -221,6 +224,36 @@ par transition : passage d'une fenêtre à `over_limit`, et passage de `overageI
 > `overageInUse` est un vestige de l'ancien flux SSE : la réponse réelle de l'API d'usage ne le
 > porte pas, elle a `extra_usage`/`spend` à la place (voir plus haut). Le check reste en place,
 > sans effet, en attendant que ces champs soient câblés dans `evaluate()` de `background.js`.
+
+#### Fin de reset
+
+L'inverse des seuils : signaler qu'une fenêtre **repart à zéro**, sans avoir à ouvrir le popup.
+Aucune donnée supplémentaire n'est collectée — `resets_at` et `utilization` sont déjà là.
+
+`isReset()` exige **deux signaux ensemble**, jamais un seul :
+
+1. `resets_at` a changé depuis le sondage précédent, **et**
+2. l'utilisation est retombée franchement : ancien % > **20**, nouveau % < **la moitié** de
+   l'ancien.
+
+Chacun pris isolément produit des faux positifs. Une borne `resets_at` qui bouge de quelques
+secondes sans reset réel n'est pas exclue par l'API — la retenir seule ferait sonner
+l'extension pour rien. Et une chute de pourcentage sans nouvelle borne est une correction de
+mesure, pas une nouvelle fenêtre. Le seuil de moitié plutôt qu'un « ≈ 0 % » absolu laisse
+passer le cas courant où un message est envoyé dans la minute qui suit le reset.
+
+S'y ajoute une **garde de fraîcheur** : la comparaison est ignorée si le sondage précédent a
+plus de **10 min** (`RESET_MAX_AGE_MS`). Sans elle, le premier sondage au réveil de Chrome
+annoncerait un reset survenu la veille.
+
+Le point de comparaison est `changes.usage.oldValue` de `storage.onChanged` — la valeur du
+sondage d'avant, lue depuis le storage, donc fiable même après un recyclage du service worker.
+`notifyState.windows.<clé>.notifiedReset` mémorise en plus la dernière borne annoncée : une
+seule notification par reset, même si le même sondage était rejoué.
+
+Couvert par [`test-background.js`](test-background.js) (`node test-background.js`), qui exerce
+les trois combinaisons (deux signaux → notifie ; borne seule → non ; chute seule → non), la
+garde de fraîcheur, l'anti-spam et la non-régression des seuils.
 
 L'icône de la notification est encodée en PNG data-URL depuis le même `OffscreenCanvas` que
 l'icône de toolbar — `chrome.notifications` exige un `iconUrl`, et c'est ce qui permet de ne

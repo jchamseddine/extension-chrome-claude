@@ -20,6 +20,17 @@ var THRESHOLDS = [95, 90, 75];
 var HISTORY_MAX = 50;
 var NOTIFY_ICON_SIZE = 128;
 
+// Detection de reset de fenetre : deux signaux exiges ensemble (voir isReset).
+var RESET_FROM_PCT = 20;                 // en dessous, une baisse n'a rien de significatif
+var RESET_MAX_AGE_MS = 10 * 60 * 1000;   // sondage a 1 min : au dela, Chrome dormait
+
+// Textes propres aux notifications, donc pas dans USAGE_LABELS de common.js, qui sert aussi
+// a l'affichage du popup.
+var RESET_MESSAGES = {
+  '5h': 'Ta limite de session vient de se reset, tu peux repartir à 0 %.',
+  '7d': 'Ta limite hebdomadaire vient de se reset, tu peux repartir à 0 %.'
+};
+
 var ALARM = 'usage-poll';
 var POLL_MINUTES = 1;   // plancher impose par chrome.alarms
 
@@ -147,12 +158,39 @@ function crossedThreshold(pct) {
   return 0;
 }
 
+// Un reset de fenetre ne se lit pas sur resets_at seul : l'API peut renvoyer une borne
+// legerement differente d'un sondage a l'autre sans reset reel. Ni sur la seule chute du
+// pourcentage : ce serait alors une correction de mesure, pas une nouvelle fenetre. On exige
+// donc les deux ensemble, plus la fraicheur du sondage precedent — sinon on annoncerait au
+// reveil de Chrome un reset survenu il y a des heures.
+function isReset(prevW, w, ageMs) {
+  if (typeof ageMs !== 'number' || ageMs < 0 || ageMs > RESET_MAX_AGE_MS) return false;
+
+  var prevSec = prevW && prevW.resets_at;
+  var sec = w && w.resets_at;
+  if (typeof prevSec !== 'number' || typeof sec !== 'number' || sec === prevSec) return false;
+
+  var pu = utilOf(prevW);
+  var u = utilOf(w);
+  if (pu === null || u === null) return false;
+
+  var prevPct = Math.round(pu * 100);
+  return prevPct > RESET_FROM_PCT && Math.round(u * 100) < prevPct / 2;
+}
+
 // Anti-spam : on memorise le dernier seuil notifie par fenetre. On ne notifie que quand le
 // seuil franchi est SUPERIEUR au dernier notifie ; redescendre le baisse silencieusement,
 // ce qui reautorise la notification si le seuil est refranchi (reset de fenetre, par ex.).
-function evaluate(data, state) {
+//
+// "prev" est l'enveloppe { data, updatedAt } du sondage precedent, telle que storage.onChanged
+// la fournit en oldValue : elle vient du storage, donc elle survit au recyclage du worker.
+function evaluate(data, state, prev) {
   var msgs = [];
   var windows = data.windows || {};
+  var prevWindows = (prev && prev.data && prev.data.windows) || {};
+  var ageMs = (prev && typeof prev.updatedAt === 'number' && isFinite(prev.updatedAt))
+    ? Date.now() - prev.updatedAt
+    : -1;   // pas de sondage precedent exploitable : aucun reset detectable
 
   Object.keys(USAGE_LABELS).forEach(function (key) {
     var w = windows[key];
@@ -181,6 +219,17 @@ function evaluate(data, state) {
     }
     st.overLimit = over;
 
+    // Anti-spam propre au reset : on memorise la derniere borne annoncee. Redondant avec la
+    // comparaison a prev dans le cas nominal, mais garantit le "une seule fois par reset"
+    // meme si le meme sondage etait rejoue.
+    if (isReset(prevWindows[key], w, ageMs) && st.notifiedReset !== w.resets_at) {
+      msgs.push({
+        title: label + ' : reset effectué',
+        message: RESET_MESSAGES[key] + ' ' + resetText(w.resets_at, key === '7d')
+      });
+      st.notifiedReset = w.resets_at;
+    }
+
     state.windows[key] = st;
   });
 
@@ -199,7 +248,7 @@ function evaluate(data, state) {
   return msgs;
 }
 
-function maybeNotify(data) {
+function maybeNotify(data, prev) {
   return chrome.storage.local.get(['settings', 'notifyState']).then(function (o) {
     // Desactivees par defaut : sans reglage enregistre, on ne notifie pas.
     if (!(o.settings && o.settings.notifications)) return;
@@ -207,7 +256,7 @@ function maybeNotify(data) {
     var state = o.notifyState || {};
     if (!state.windows) state.windows = {};
 
-    var msgs = evaluate(data, state);
+    var msgs = evaluate(data, state, prev);
     return chrome.storage.local.set({ notifyState: state }).then(function () {
       if (!msgs.length) return;
       var windows = data.windows || {};
@@ -341,9 +390,10 @@ chrome.storage.onChanged.addListener(function (changes, area) {
 
   var data = changes.usage.newValue && changes.usage.newValue.data;
   if (!data) return;
+  var prev = changes.usage.oldValue;   // sondage precedent, pour la detection de reset
   chain = chain
     .then(function () { return recordHistory(data); })
-    .then(function () { return maybeNotify(data); })
+    .then(function () { return maybeNotify(data, prev); })
     .catch(function (e) { console.warn('[usage]', e); });
 });
 
