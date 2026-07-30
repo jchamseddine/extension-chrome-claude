@@ -1,5 +1,7 @@
 // Popup : rend le dernier sondage d'usage stocke sous la cle "usage", une projection du
-// moment ou la fenetre 5h atteindrait 100 %, et le reglage des notifications de seuil.
+// moment ou la fenetre 5h atteindrait 100 %, le reglage des notifications de seuil et la
+// personnalisation du theme de claude.ai (cles "accentColor", "fontWeightPreset",
+// "radiusPreset" et "fontFamily", appliquees par theme.js).
 // Ne lit que "windows" ; c'est la seule partie de la reponse d'usage que parseUsage()
 // normalise (voir usage-source.js).
 'use strict';
@@ -148,10 +150,81 @@ function renderSettings(settings) {
   });
 }
 
+// ---- personnalisation --------------------------------------------------------
+
+// Couleur d'accent par defaut de claude.ai (--cds-clay-emphasized). Sert de valeur affichee
+// quand rien n'est stocke, et de retour apres reinitialisation.
+var DEFAULT_ACCENT = '#c6613f';
+
+// Ordre des crans des deux curseurs : l'index 1 est le prereglage neutre, qui n'injecte rien
+// cote theme.js.
+var WEIGHT_PRESETS = ['thin', 'normal', 'bold'];
+var RADIUS_PRESETS = ['square', 'normal', 'round'];
+var NEUTRAL_INDEX = 1;
+
+var THEME_KEYS = ['accentColor', 'fontWeightPreset', 'radiusPreset', 'fontFamily'];
+
+// Une valeur absente ou inconnue retombe sur le cran neutre.
+function presetIndex(list, value) {
+  var i = list.indexOf(value);
+  return i === -1 ? NEUTRAL_INDEX : i;
+}
+
+// On n'ecrit que les quatre cles ci-dessus : c'est theme.js, cote page, qui reagit via
+// storage.onChanged et repeint tous les onglets claude.ai ouverts. Le popup n'a donc rien a
+// envoyer aux onglets, et l'extension n'a besoin ni de "tabs" ni de "scripting".
+function renderTheme(stored) {
+  var accent = document.getElementById('accent');
+  var weight = document.getElementById('fontWeight');
+  var radius = document.getElementById('radiusPreset');
+  var family = document.getElementById('fontFamily');
+
+  accent.value = (typeof stored.accentColor === 'string' && /^#[0-9a-f]{6}$/i.test(stored.accentColor))
+    ? stored.accentColor
+    : DEFAULT_ACCENT;
+  weight.value = String(presetIndex(WEIGHT_PRESETS, stored.fontWeightPreset));
+  radius.value = String(presetIndex(RADIUS_PRESETS, stored.radiusPreset));
+  family.value = ['sans', 'serif', 'mono'].indexOf(stored.fontFamily) === -1 ? '' : stored.fontFamily;
+
+  // "input" : les controles natifs emettent en continu pendant le glissement, ce qui donne un
+  // apercu live. chrome.storage.local n'a pas de quota d'ecriture horaire.
+  // "change" en filet : le selecteur de couleur s'ouvre dans une fenetre separee et le popup
+  // peut perdre le focus ; si les "input" du glissement se perdent, la validation ecrit quand meme.
+  function bind(el, save) {
+    el.addEventListener('input', save);
+    el.addEventListener('change', save);
+  }
+
+  bind(accent, function () { chrome.storage.local.set({ accentColor: accent.value }); });
+  bind(weight, function () {
+    chrome.storage.local.set({ fontWeightPreset: WEIGHT_PRESETS[Number(weight.value)] });
+  });
+  bind(radius, function () {
+    chrome.storage.local.set({ radiusPreset: RADIUS_PRESETS[Number(radius.value)] });
+  });
+  // "Defaut" (valeur vide) supprime la cle : c'est le seul moyen de revenir a la police
+  // d'origine sans passer par "Reinitialiser".
+  bind(family, function () {
+    if (family.value) chrome.storage.local.set({ fontFamily: family.value });
+    else chrome.storage.local.remove('fontFamily');
+  });
+
+  document.getElementById('themeReset').addEventListener('click', function () {
+    accent.value = DEFAULT_ACCENT;
+    weight.value = String(NEUTRAL_INDEX);
+    radius.value = String(NEUTRAL_INDEX);
+    family.value = '';
+    // Un seul remove pour les quatre cles : theme.js n'en fait qu'un rendu, et l'element
+    // <style> disparait au lieu d'etre vide.
+    chrome.storage.local.remove(THEME_KEYS);
+  });
+}
+
 // ---- rendu -------------------------------------------------------------------
 
-chrome.storage.local.get(['usage', 'usageHistory', 'settings']).then(function (o) {
+chrome.storage.local.get(['usage', 'usageHistory', 'settings'].concat(THEME_KEYS)).then(function (o) {
   renderSettings(o.settings);
+  renderTheme(o);
 
   var usage = o.usage;
   var windows = (usage && usage.data && usage.data.windows) || null;

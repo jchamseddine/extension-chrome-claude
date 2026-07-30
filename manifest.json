@@ -24,6 +24,11 @@
       "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
       "js": ["content.js", "context-estimator.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
+      "js": ["theme.js"],
+      "run_at": "document_start"
     }
   ]
 }

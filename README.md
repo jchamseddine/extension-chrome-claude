@@ -7,6 +7,10 @@ Extension Chrome personnelle (Manifest V3, JS vanilla, aucun build step). Elle a
 2. une **estimation** de la taille du contexte de la conversation ouverte, en pastille sur
    la page.
 
+Elle permet aussi de **personnaliser le thème** de claude.ai (couleur d'accent, poids de
+police, coins et ombres, police de lecture), fonctionnalité totalement indépendante des deux
+précédentes.
+
 Rien ne sort de la machine, sauf vers claude.ai lui-même : tout est dans
 `chrome.storage.local`, aucun serveur tiers.
 
@@ -96,6 +100,7 @@ point redevient utile.
 | `inject.js` | MAIN | patch de `fetch` et de l'History API, tap SSE, comptage de caractères |
 | `content.js` | isolé | relais de secours : refait le fetch d'usage same-origin quand le SW est refusé |
 | `context-estimator.js` | isolé | tient l'estimation de contexte par conversation et affiche la pastille sur `/chat/*` |
+| `theme.js` | isolé | surcharge les tokens de thème du site — **indépendant du reste** |
 | `background.js` | service worker | sonde l'API toutes les 60 s, écrit `usage`, dessine l'icône, notifie |
 | `usage-source.js` | SW | **seul** point d'adaptation à l'API : URL + `parseUsage()` |
 | `common.js` | SW + popup | seuils de couleur partagés (`utilOf`, `colorFor`) |
@@ -109,6 +114,8 @@ Clés `chrome.storage.local` :
 - `usageHistory` = `[{ t, u5, u7 }, …]` — historique roulant, 50 points max
 - `notifyState` = `{ windows: { '5h': { threshold, overLimit }, … }, overage }` — anti-spam
 - `settings` = `{ notifications: false }` — réglages du popup
+- `accentColor`, `fontWeightPreset`, `radiusPreset`, `fontFamily` — personnalisation du thème,
+  quatre clés de premier niveau ; **toutes absentes** = thème d'origine intact (voir plus bas)
 
 ### Sondage
 
@@ -199,6 +206,114 @@ trompeur.
 Ne sont pas comptés : les instructions système, les outils, les documents de projet, les
 résultats de recherche web. Le vrai contexte est donc toujours plus grand que ce chiffre.
 
+### Personnalisation du thème
+
+Fonctionnalité à part : `theme.js` ne partage rien avec le reste de l'extension (ni
+`usage-source.js`, ni `background.js`, ni `common.js`), et a sa propre entrée
+`content_scripts` dans le manifest pour pouvoir être retirée d'un bloc.
+
+Quatre réglages, quatre clés de premier niveau (pas dans l'objet `settings`, réservé aux
+notifications) :
+
+| Clé | Valeurs | Absente = |
+| --- | --- | --- |
+| `accentColor` | `"#rrggbb"` | couleur d'origine |
+| `fontWeightPreset` | `"thin"` / `"normal"` / `"bold"` | `"normal"` |
+| `radiusPreset` | `"square"` / `"normal"` / `"round"` | `"normal"` |
+| `fontFamily` | `"sans"` / `"serif"` / `"mono"` | police d'origine |
+
+**Un seul point d'injection** : un `<style id="__claude_theme_v1__">` unique porte toutes les
+règles, dans une seule déclaration `:root,html.cds-root,.cds-root{…}`. `"normal"` n'injecte
+rien pour sa partie, et toute valeur hors liste est traitée comme absente — comme `accentValid`
+pour la couleur, puisque le contenu finit concaténé dans du texte CSS.
+
+**`--font-open-dyslexic` est hors périmètre** : claude.ai pilote déjà cette police nativement
+(Réglages → Apparence → « Chat font » : Default / Match System / Dyslexic Friendly, cf. le
+[centre d'aide](https://support.claude.com/en/articles/8887527-customizing-your-appearance-settings)).
+Le menu de l'extension n'offre donc que sans-serif / serif / monospace.
+
+#### Couleur d'accent
+
+Chaîne de résolution **confirmée par inspection du bouton d'envoi** :
+
+| Classe Tailwind | Variable | Alias | Valeur d'origine |
+| --- | --- | --- | --- |
+| `bg-fill-brand` | `--cds-fill-brand` | `--cds-clay-emphasized` | `#c6613f` |
+| `bg-fill-brand-hover` | `--cds-fill-brand-hover` | `--cds-clay` | `#d97757` |
+
+Ce sont des tokens de base du design system, pas propres à ce bouton : les surcharger repeint
+les autres éléments de marque. `theme.js` ne pose que ces **deux seules** variables pour la
+couleur, en `!important`, sur le sélecteur `:root,html.cds-root,.cds-root` :
+
+| Sélecteur | Pourquoi |
+| --- | --- |
+| `:root` | cas où les tokens sont portés par `<html>` |
+| `html.cds-root` | même élément, mais spécificité (0,1,1) > le `.cds-root` (0,1,0) du site |
+| `.cds-root` | si la classe n'est **pas** sur `<html>`, le site pose les tokens sur un élément plus proche du bouton ; entre deux éléments différents la spécificité ne joue pas et notre valeur héritée depuis `:root` perdrait même en `!important` |
+
+Pour savoir dans quel cas on est : `document.querySelector('.cds-root').tagName` dans la console
+de l'onglet claude.ai.
+
+La couleur de survol est calculée en JS : hex → HSL, **+9 points absolus de luminosité**
+(teinte et saturation inchangées), HSL → hex. Le chiffre est calé sur le vrai couple
+`#c6613f` (L 51,2 %) → `#d97757` (L 59,6 %), soit +8,4 points. En absolu et non en relatif :
+un facteur multiplicatif écrase l'écart sur les teintes sombres. Exemples :
+`#c6613f → #d17e62`, `#3f6ac6 → #6285d1`, `#20304f → #2d4470`. Testé par
+`node test-theme.js`.
+
+#### Poids, coins/ombres, police : dérivés des valeurs d'origine
+
+Ces trois réglages ne posent **aucune valeur en dur** : ils lisent les tokens du site à
+l'exécution (`getComputedStyle`) et les transforment. Une variable illisible ou de format
+inattendu n'est simplement pas surchargée, avec un `console.warn` qui la nomme.
+
+| Constante | Valeur | Pourquoi |
+| --- | --- | --- |
+| `THEME_WEIGHT_DELTA` | ±100 | un cran de la graduation CSS sur les 4 `--cds-font-weight-*` : visible sans casser la hiérarchie regular/bold |
+| `THEME_RADIUS_FACTOR` | ×1,5 | au-delà, les petits contrôles deviennent des gélules |
+| `THEME_SHADOW_LENGTH_FACTOR` | ×1,2 | des coins plus ronds paraissent plus plats sans ombres un peu plus marquées |
+| `THEME_SHADOW_ALPHA_FACTOR` | ×1,15 | idem, borné à 1 |
+
+`themeScaleShadow()` traite `--cds-shadow-{sm,md,lg}` par remplacement regex, sans découper les
+couches ni les positions : **les décalages grandissent donc des mêmes 20 % que le flou.**
+Simplification assumée — visuellement subtile, et ça évite un parseur `box-shadow` complet pour
+un format qu'on ne maîtrise pas. Une couleur dont l'alpha n'est pas extractible (`oklch(… / .05)`,
+alpha en `%`) laisse l'ombre **intacte** plutôt que d'inventer une valeur. « Carré » ne calcule
+rien : `--cds-radius: 0` et les trois ombres à `none`.
+
+Pour la police, on **alias** la variable cible sur une pile que le site définit déjà —
+`<var cible>: var(--font-anthropic-serif)` — plutôt que de coder des piles en dur. La variable
+cible est trouvée à l'exécution par `themeDetectFontVar()` : celle des trois `--font-anthropic-*`
+dont la valeur correspond au `font-family` calculé de `document.body`. Aucune correspondance →
+warn et réglage sans effet, pas de cible devinée.
+
+⚠️ **La capture des valeurs d'origine est mémoïsée une seule fois** (`themeCaptureOriginals`),
+et tous les réglages qui écrivent ces variables attendent qu'elle ait réussi. Sans ça, notre
+propre feuille en `!important` polluerait la lecture suivante : le rayon serait multiplié par
+1,5 **en cascade** à chaque changement de préréglage, et la pile de police aliasée ne serait
+plus détectable. C'est aussi pourquoi « Carré » et la police attendent la capture alors que leur
+calcul n'en a pas besoin.
+
+À `document_start` les feuilles du site ne sont pas encore parsées et tout revient vide : la
+capture renvoie `null` **sans mémoïser**, et `theme.js` retente sur `DOMContentLoaded` puis à
+100/300/800/1500/3000 ms. Passé ce délai, un warn nomme ce qui reste introuvable.
+
+#### Propagation
+
+**Le popup n'envoie rien aux onglets** : il écrit ou supprime les quatre clés, et chaque onglet
+réagit via `chrome.storage.onChanged` en **relisant les quatre** (un `remove` groupé produit
+alors un seul rendu cohérent). Tous les onglets claude.ai ouverts changent donc ensemble, sans
+rechargement, sans permission `scripting` ni `tabs`. « Réinitialiser » supprime les quatre clés,
+ce qui **retire** l'élément `<style>` au lieu de le vider — le thème d'origine redevient
+exactement ce qu'il était.
+
+⚠️ **Si un élément de marque ne change pas de couleur**, ne pas ajouter de variable au
+hasard : inspecter cet élément précis pour confirmer sa vraie chaîne de résolution, comme
+cela a été fait pour le bouton d'envoi. Les variables de fond (`--_gray-*`,
+`--cds-hsl-gray-*`, `--cds-oncolor-*`), celles de texte, ainsi que `--_brand-clay` et
+`--cds-hsl-clay` sont **hors périmètre** — ces deux dernières n'apparaissent pas dans la
+chaîne confirmée ci-dessus.
+
 ## Debug
 
 **L'usage se diagnostique depuis la console du service worker** (`chrome://extensions` →
@@ -247,3 +362,13 @@ chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
   forcément l'active. À affiner dans `pickOrgId()` si le cas se présente.
 - Le sondage tourne à **1/minute**, plancher de `chrome.alarms` : une consommation faite en
   quelques secondes n'apparaît qu'au sondage suivant. Le popup affiche l'âge de la valeur.
+- **Le thème ne s'applique qu'aux onglets ayant un content script** : un onglet claude.ai
+  ouvert avant l'installation ou le rechargement de l'extension ne réagit qu'une fois
+  rechargé. Même limite que le relais de secours du sondage.
+- **À `document_start` les valeurs d'origine ne sont pas encore lisibles** : seule la couleur
+  d'accent s'applique immédiatement. Poids, coins/ombres et police arrivent quelques centaines
+  de millisecondes plus tard, quand les feuilles du site sont parsées.
+- **Les noms de tokens du design system ne sont pas garantis stables.** Si un jour l'accent ne
+  change plus, c'est `--cds-clay-emphasized` / `--cds-clay` qu'il faut re-confirmer en
+  inspectant le bouton d'envoi ; il n'y a que `theme.js` à corriger. Pour les trois autres
+  réglages, le `console.warn` nomme directement la variable en cause.
