@@ -77,6 +77,14 @@ plus : il est relevé dans les URL que la page a réellement appelées
 PDF passe par `window.print()` dans une iframe hors écran, sans aucune bibliothèque. Testé par
 `node test-export.js` (logique pure) et `node test-export-dom.js` (jsdom optionnel).
 
+⚠️ L'ancrage du bouton part de **« Partager »**, pas du slot `div#dframe-header-actions-slot` :
+ce dernier est absent d'au moins un contexte (conversation de Projet), où l'export se
+désactivait à tort. `exAnchor()` cherche « Partager » du plus proche au plus large et place le
+bouton dans *son* parent, quel qu'il soit — donc **ne pas remettre de condition « slot
+obligatoire »**, et ne pas ajouter un sélecteur de conteneur par contexte : c'est justement ce
+que cet ordre évite. Le slot ne sert que de repli, et l'arrêt propre ne subsiste que si les deux
+manquent.
+
 ## Contraintes techniques
 
 - Manifest V3 uniquement, JS vanilla, pas de build step (chargeable directement en mode

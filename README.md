@@ -706,9 +706,20 @@ Si aucun des deux n'aboutit, l'export refuse de partir et demande de recharger l
 
 | Sélecteur | Rôle |
 | --- | --- |
-| `div#dframe-header-actions-slot` | point d'insertion **stable** ; absent = arrêt propre |
-| `button[data-testid="wiggle-controls-actions-share"]` | voisin de placement **et** modèle de style |
-| `div[data-testid="chat-header"]` | observé par le `MutationObserver` |
+| `button[data-testid="wiggle-controls-actions-share"]` | **ancrage principal** : voisin de placement **et** modèle de style |
+| `div#dframe-header-actions-slot` | conteneur de **repli**, si « Partager » est absent |
+| `div[data-testid="chat-header"]` | observé par le `MutationObserver` ; sert aussi à cadrer la recherche |
+
+⚠️ **L'ancrage part du bouton « Partager », pas du slot** — et pas l'inverse, contrairement à la
+première version. Le slot avait été pris pour « le » point d'insertion stable, mais il est
+**absent d'au moins un contexte** (conversation de Projet) : l'export s'y désactivait avec un
+`[export] point d'insertion … introuvable` alors que « Partager » était bien là. `exAnchor()`
+cherche donc « Partager » du plus proche au plus large — slot, puis en-tête, puis document — et
+place le bouton dans *son* parent, quel qu'il soit. La détection ne dépend plus de la coque
+d'en-tête, **sans qu'aucun sélecteur de conteneur n'ait été deviné par contexte** : c'est la même
+paire confirmée, essayée dans un autre ordre. Le repli sur le slot n'est utilisé que si
+« Partager » est introuvable ; si les deux manquent, l'export se désactive proprement — c'est le
+seul cas restant, et il reste signalé.
 
 Le bouton **ne s'invente pas de style** : il copie la `className` du bouton « Partager » et la
 taille de son `<svg>`, donc rayon, états de survol et thème suivent le site sans qu'on ait à
@@ -752,8 +763,10 @@ repli sur `conversation`.
 
 `node test-export.js` couvre la logique pure (32 tests) : génération du Markdown, échappement,
 rendu des blocs de code, nom de fichier, lecture de la réponse d'API.
-[`test-export-dom.js`](test-export-dom.js) vérifie l'insertion du bouton dans l'en-tête et
-**se saute** sans jsdom, comme `test-folders-dom.js`.
+[`test-export-dom.js`](test-export-dom.js) vérifie l'insertion du bouton dans l'en-tête (8 tests)
+et **se saute** sans jsdom, comme `test-folders-dom.js`. Trois de ses tests portent sur la
+détection du contexte : en-tête sans slot d'actions, en-tête non reconnu, et aucun ancrage du
+tout — les deux premiers échouent bien si l'on remet la condition « slot obligatoire ».
 
 ## Debug
 
@@ -779,7 +792,7 @@ pour ne pas noyer la console à chaque re-rendu :
 | `[folders] conteneur « .dframe-nav-scroll » introuvable après 8 s` | la sidebar a changé — rien n'a été inséré, voir le tableau des sélecteurs |
 | `[folders] wrapper « .dframe-recents-by-mode » introuvable` | dégradé, pas bloquant : les dossiers sont insérés directement dans le conteneur scrollable |
 | `[folders] aucun « .df-drag-shiftable » au-dessus du lien` | le lien est trouvé mais plus le wrapper déplaçable : plus rien n'est rangé |
-| `[export] point d'insertion « div#dframe-header-actions-slot » introuvable` | l'en-tête a changé — aucun bouton inséré |
+| `[export] aucun point d'ancrage dans l'en-tête : ni « …-share » ni « …-actions-slot »` | ni le bouton « Partager » ni le slot de repli — aucun bouton inséré. Le message dit si l'en-tête `chat-header` était présent : **présent** = sa structure interne a changé, **absent** = ce contexte n'a pas d'en-tête de conversation reconnu |
 | `[export] bouton « …-share » introuvable` | dégradé, pas bloquant : le bouton prend un style neutre au lieu de copier celui du site |
 | `[export] format de réponse inconnu … JSON reçu :` | la réponse de conversation a changé de forme — corriger `parseConversation()`, avec un test dans `test-export.js` |
 | `[export] échec : …` | l'export s'est arrêté avant d'écrire quoi que ce soit ; la même phrase s'affiche en toast dans la page |

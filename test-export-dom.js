@@ -45,6 +45,18 @@ function headerHtml(withShare) {
          '</div>';
 }
 
+// Contexte « Projet » tel qu'on le suppose d'apres le warning recu : le slot d'actions est
+// absent, mais le bouton « Partager » est bien la. Le nom du conteneur est volontairement
+// different de ceux du depot : le test doit passer SANS que l'ancrage connaisse ce conteneur.
+function projectHeaderHtml() {
+  return '<div data-testid="chat-header">' +
+           '<div class="un-conteneur-que-le-code-ne-connait-pas">' +
+             '<button data-testid="wiggle-controls-actions-share" class="' + SHARE_CLASS + '">' +
+               '<svg width="16" height="16"></svg></button>' +
+           '</div>' +
+         '</div>';
+}
+
 function boot(pathname, body) {
   var dom = new JSDOM('<!doctype html><html><body>' + body + '</body></html>', {
     url: 'https://claude.ai' + pathname,
@@ -137,11 +149,47 @@ test('clic : menu à deux entrées, fermé par Échap', function () {
   });
 });
 
-test('point d\'insertion introuvable : rien inséré, en-tête natif intact', function () {
+// ---- detection du contexte ---------------------------------------------------------------
+// Le bug corrige ici : l'ancrage supposait UNE structure d'en-tete (le slot d'actions) et se
+// desactivait partout ailleurs, alors que « Partager » — le vrai voisin de placement — etait
+// present. Ces trois tests verrouillent le fait que la detection ne depend plus de la coque.
+
+test('en-tête sans slot d\'actions (contexte Projet) : bouton posé quand même après « Partager »',
+  function () {
+    var w = boot('/chat/' + UUID, projectHeaderHtml());
+    return w.settle().then(function () {
+      var btn = w.doc.querySelector(BTN);
+      assert.ok(btn, 'bouton absent alors que « Partager » est présent');
+      assert.strictEqual(
+        w.doc.querySelector('[data-testid="wiggle-controls-actions-share"]').nextSibling, btn,
+        'le bouton doit suivre immédiatement « Partager »');
+      assert.strictEqual(btn.className, SHARE_CLASS, 'style non copié du bouton natif');
+      assert.strictEqual(w.warns.length, 0, w.warns.join(' | '));
+    });
+  });
+
+// Cas le plus large : ni slot, ni en-tete reconnu. Tant que « Partager » est la, il y a un
+// voisin de placement — c'est le seul selecteur dont l'ancrage a vraiment besoin.
+test('ni slot ni en-tête reconnu, mais « Partager » présent : bouton posé', function () {
+  var w = boot('/chat/' + UUID,
+    '<div class="coque-inconnue"><button data-testid="wiggle-controls-actions-share" ' +
+    'class="' + SHARE_CLASS + '"><svg width="16" height="16"></svg></button></div>');
+  return w.settle().then(function () {
+    var btn = w.doc.querySelector(BTN);
+    assert.ok(btn, 'bouton absent');
+    assert.strictEqual(btn.parentElement.className, 'coque-inconnue');
+  });
+});
+
+// Le filet de sécurité reste en place : un contexte sans AUCUN des deux ancrages ne casse rien.
+// C'est le seul cas où l'export doit encore se désactiver. (Le warn qui l'annonce part à 8 s,
+// trop tard pour ce harnais : on vérifie la décision elle-même, via exAnchor().)
+test('aucun ancrage : rien inséré, en-tête natif intact', function () {
   var w = boot('/chat/' + UUID, '<div data-testid="chat-header"><span>natif</span></div>');
   return w.settle(50).then(function () {
     assert.strictEqual(w.doc.querySelector(BTN), null);
     assert.strictEqual(w.doc.querySelector('[data-testid="chat-header"]').textContent, 'natif');
+    assert.strictEqual(w.win.exAnchor(), null, 'aucun ancrage ne doit être trouvé');
   });
 });
 

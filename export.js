@@ -17,8 +17,13 @@
 // autocontinue.js et folders.js).
 'use strict';
 
-// Selecteurs confirmes par inspection reelle. Le slot est le point d'insertion STABLE ; le
-// bouton « Partager » ne sert qu'a se placer juste apres lui et a copier son style.
+// Selecteurs confirmes par inspection reelle. ORDRE D'ANCRAGE : le bouton « Partager » d'abord,
+// le slot en repli — et non l'inverse. Le slot avait ete pris pour « le » point d'insertion
+// stable, mais il est absent d'au moins un contexte (conversation de Projet), ou l'export se
+// desactivait alors que « Partager » etait la. Le bouton « Partager », lui, est ce qu'on vise
+// vraiment : voisin de placement ET modele de style. S'ancrer dessus rend la detection
+// independante de la coque d'en-tete, donc du contexte, sans avoir a deviner un selecteur de
+// conteneur par contexte.
 var EX_SLOT = 'div#dframe-header-actions-slot';
 var EX_SHARE = 'button[data-testid="wiggle-controls-actions-share"]';
 var EX_HEADER = 'div[data-testid="chat-header"]';
@@ -305,35 +310,56 @@ function exButton(share) {
   return btn;
 }
 
+// Ou poser le bouton, quel que soit le contexte (conversation standard, conversation de Projet).
+// Rend { share, container } ou null si l'en-tete n'offre aucun des deux ancrages connus.
+//
+// La recherche du bouton « Partager » va du plus proche au plus large — slot, puis en-tete, puis
+// document — pour que le cas standard se comporte exactement comme avant, et que les contextes
+// sans slot ni en-tete reconnu trouvent quand meme leur ancre. AUCUN selecteur nouveau n'est
+// introduit ici : c'est la meme paire confirmee, essayee dans un ordre qui ne suppose plus une
+// seule structure d'en-tete.
+function exAnchor() {
+  var slot = document.querySelector(EX_SLOT);
+  var header = document.querySelector(EX_HEADER);
+
+  var share = (slot && slot.querySelector(EX_SHARE))
+    || (header && header.querySelector(EX_SHARE))
+    || document.querySelector(EX_SHARE);
+
+  if (share && share.parentNode) return { share: share, container: share.parentNode };
+  if (slot) return { share: null, container: slot };
+  return null;
+}
+
 // Le bouton n'a de sens que sur une conversation ouverte : sur l'accueil il n'y a rien a
 // exporter. Il est donc pose et retire au fil de la navigation.
 function exPlace() {
   if (!exAlive()) return;
 
-  var slot = document.querySelector(EX_SLOT);
   var existing = document.getElementById(EX_BTN_ID);
+  var anchor = exportUuidFromPath(location.pathname) ? exAnchor() : null;
 
-  if (!slot || !exportUuidFromPath(location.pathname)) {
+  if (!anchor) {
     if (existing) existing.remove();
     return;
   }
 
-  var share = slot.querySelector(EX_SHARE) || document.querySelector(EX_SHARE);
-  if (!share) {
+  if (!anchor.share) {
     exWarn('share', 'bouton « ' + EX_SHARE + ' » introuvable : le bouton d\'export prend un ' +
       'style neutre au lieu de copier celui du site.');
   }
 
   // Deja en place au bon endroit : un re-rendu de l'en-tete n'a pas eu lieu, on ne touche a rien.
-  if (existing && existing.parentNode && (!share || existing.previousSibling === share)) return;
+  if (existing && existing.parentNode === anchor.container &&
+      (!anchor.share || existing.previousSibling === anchor.share)) return;
   if (existing) existing.remove();
 
   exStyle();
-  var btn = exButton(share);
+  var btn = exButton(anchor.share);
 
-  // Juste apres « Partager », dans son propre conteneur ; a defaut, en fin du slot stable.
-  if (share && share.parentNode) share.parentNode.insertBefore(btn, share.nextSibling);
-  else slot.appendChild(btn);
+  // Juste apres « Partager », dans son propre conteneur ; a defaut, en fin du slot.
+  if (anchor.share) anchor.container.insertBefore(btn, anchor.share.nextSibling);
+  else anchor.container.appendChild(btn);
 }
 
 // ---- observation -------------------------------------------------------------
@@ -363,10 +389,16 @@ function exWatch() {
 exWatch();
 exPlace();
 
-// Un seul message, explicite, si le point d'insertion n'est jamais apparu. Reserve au cas ou
-// une conversation est bien ouverte : sur l'accueil, l'absence de slot est normale.
+// Un seul message, explicite, si AUCUN des deux ancrages n'est jamais apparu. Reserve au cas ou
+// une conversation est bien ouverte : sur l'accueil, leur absence est normale.
+//
+// Le message nomme les deux selecteurs et dit si l'en-tete lui-meme a ete reconnu : c'est ce qui
+// distingue « l'en-tete a change de structure » de « ce contexte n'a pas d'en-tete de
+// conversation du tout », et ca evite un second aller-retour d'inspection.
 setTimeout(function () {
   if (document.getElementById(EX_BTN_ID) || !exportUuidFromPath(location.pathname)) return;
-  exWarn('slot', 'point d\'insertion « ' + EX_SLOT + ' » introuvable : le bouton d\'export est ' +
-    'désactivé et rien n\'a été inséré dans l\'en-tête. Voir la section Export du README.');
+  exWarn('slot', 'aucun point d\'ancrage dans l\'en-tête : ni « ' + EX_SHARE + ' » ni « ' +
+    EX_SLOT + ' » (en-tête « ' + EX_HEADER + ' » ' +
+    (document.querySelector(EX_HEADER) ? 'présent' : 'absent') + '). Le bouton d\'export est ' +
+    'désactivé et rien n\'a été inséré. Voir la section Export du README.');
 }, 8000);
