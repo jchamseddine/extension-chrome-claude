@@ -39,6 +39,44 @@ le piège d'unité (`utilization`/`percent` en 0-100, pas en fraction 0-1). Test
 été capturée — voir la section dédiée du README si le sondage échoue avant même d'atteindre
 `.../usage`.
 
+Quatre fonctionnalités s'ajoutent, indépendantes des trois sources ci-dessus et les unes des
+autres : la **personnalisation du thème** (`theme.js`), l'**auto-continue**
+(`autocontinue-source.js` + `autocontinue.js` + `autocontinue-bg.js`), qui clique le bouton
+« Continue » d'une réponse arrêtée par la limite de tool-use. L'auto-continue exige **deux
+conditions cumulées** (bouton visible ET phrase de limite dans le seul dernier message) et
+n'a qu'un détecteur, `acTick()`, réveillé soit par un `MutationObserver`, soit par le service
+worker — d'où l'impossibilité structurelle du double-clic. Testé par
+`node test-autocontinue.js` (logique pure) et `node test-autocontinue-dom.js` (DOM bouchonné).
+
+⚠️ Convention à ne pas casser : `autoContinueMaxCount === 0` signifie **illimité**, partout
+(`AC_UNLIMITED`). C'est aussi ce que rend `acSettings()` pour une clé absente ou aberrante, donc
+un réglage non configuré ne bloque jamais. Une comparaison `count >= maxCount` nue bloquerait
+immédiatement à 0 : le court-circuit doit passer **avant**, et `acMaxReached()` est le seul
+endroit du dépôt où cette comparaison a le droit d'exister. Quand l'auto-continue ne clique pas,
+le diagnostic est dans la console du service worker (état de la boucle) puis dans celle de
+l'onglet (bouton, phrase, compteur, décision, et le message réel recopié).
+
+⚠️ Les **dossiers personnalisés** de la sidebar (`folders-source.js` + `folders.js`) sont la
+fonctionnalité **la plus fragile du dépôt** : la seule à manipuler la structure DOM native de
+claude.ai plutôt que des variables CSS ou des données d'API. Elle **déplace** les vrais nœuds
+des conversations (jamais de clone, sinon les clics et menus natifs seraient perdus), s'ancre
+sur `a[href^="/chat/"]` puis `closest('.df-drag-shiftable')`, et se réapplique via un
+`MutationObserver` sur `aside.dframe-sidebar`. **Ne pas re-deviner les sélecteurs** : ils sont
+confirmés par inspection et consignés dans un tableau du README, avec leur fragilité respective.
+Toute la logique vérifiable vit dans `folders-source.js` (`node test-folders.js`) ; le placement
+DOM a un harnais jsdom optionnel, `node test-folders-dom.js`, qui se saute si jsdom est absent —
+le dépôt reste sans `package.json` ni `node_modules`.
+
+L'**export de conversation** (`export-source.js` + `export.js`) ajoute un bouton à côté de
+« Partager ». Décision de conception à ne pas défaire : **le contenu vient de l'API**
+(`…/chat_conversations/<uuid>`, le même GET que celui intercepté par `inject.js`), jamais du
+DOM — scraper aurait imposé de dérouler toute la conversation, et un export tronqué ne se voit
+pas. Il n'y a **pas de repli DOM**, délibérément. L'uuid d'organisation n'est pas deviné non
+plus : il est relevé dans les URL que la page a réellement appelées
+(`performance.getEntriesByType('resource')`), justement pour ne pas dépendre de `ORGS_PATH`. Le
+PDF passe par `window.print()` dans une iframe hors écran, sans aucune bibliothèque. Testé par
+`node test-export.js` (logique pure) et `node test-export-dom.js` (jsdom optionnel).
+
 ## Contraintes techniques
 
 - Manifest V3 uniquement, JS vanilla, pas de build step (chargeable directement en mode

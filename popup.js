@@ -2,7 +2,8 @@
 // moment ou la fenetre 5h atteindrait 100 %, le statut de status.claude.com (cle "status",
 // source independante), le reglage des notifications de seuil et la personnalisation du theme
 // de claude.ai (cles "accentColor", "fontWeightPreset", "radiusPreset" et "fontFamily",
-// appliquees par theme.js).
+// appliquees par theme.js), plus les reglages de l'auto-continue (cles "autoContinue*",
+// appliquees par autocontinue.js et autocontinue-bg.js).
 // Ne lit que "windows" ; c'est la seule partie de la reponse d'usage que parseUsage()
 // normalise (voir usage-source.js).
 'use strict';
@@ -215,6 +216,78 @@ function renderSettings(settings) {
   });
 }
 
+// ---- auto-continue -----------------------------------------------------------
+
+// Fonctionnalite a part : quatre cles dediees (voir AC_KEYS dans autocontinue-source.js), ni
+// dans l'objet "settings" — reserve aux notifications — ni dans les cles de theme. Le popup ne
+// fait qu'ECRIRE : autocontinue.js cote page et autocontinue-bg.js cote worker reagissent via
+// storage.onChanged, il n'y a donc rien a envoyer aux onglets.
+function countText(s) {
+  var head = s.count + (s.maxCount ? ' / ' + s.maxCount : '');
+  var body = head + (s.count > 1 ? ' continuations déclenchées' : ' continuation déclenchée');
+  return acMaxReached(s) ? body + ' — maximum atteint' : body;
+}
+
+function renderAutoContinue(stored) {
+  var enabled = document.getElementById('acEnabled');
+  var max = document.getElementById('acMax');
+  var count = document.getElementById('acCount');
+  var pause = document.getElementById('acPause');
+
+  var s = acSettings(stored);
+
+  function paint() {
+    enabled.checked = s.enabled;
+    count.textContent = countText(s);
+    pause.textContent = s.paused ? 'Reprendre' : 'Pause';
+    // La pause ne veut rien dire tant que la fonctionnalite est eteinte.
+    pause.disabled = !s.enabled;
+  }
+
+  max.value = String(s.maxCount);
+  paint();
+
+  // A l'activation, on ecrit les QUATRE cles, pas seulement l'interrupteur. Ca ne change aucun
+  // comportement — acSettings() traite deja une cle absente exactement comme sa valeur par
+  // defaut — mais ca rend le storage lisible a la main : en inspectant chrome.storage.local on
+  // voit l'etat complet, au lieu d'avoir a savoir ce que vaut une cle manquante.
+  enabled.addEventListener('change', function () {
+    s.enabled = enabled.checked;
+
+    var patch = { autoContinueEnabled: s.enabled };
+    if (s.enabled) {
+      patch.autoContinueCount = s.count;
+      patch.autoContinueMaxCount = s.maxCount;
+      patch.autoContinuePaused = s.paused;
+    }
+    chrome.storage.local.set(patch);
+    paint();
+  });
+
+  // "input" ET "change" : le popup peut etre ferme sans que le champ perde le focus, et
+  // "change" ne partirait alors jamais. On borne la valeur ecrite des la frappe, mais on ne
+  // reecrit le champ qu'a la validation — sinon taper "1000" le tronquerait sous les doigts.
+  max.addEventListener('input', function () {
+    var v = Math.floor(Number(max.value));
+    s.maxCount = (isFinite(v) && v > 0) ? Math.min(v, AC_MAX_LIMIT) : 0;
+    chrome.storage.local.set({ autoContinueMaxCount: s.maxCount });
+    paint();
+  });
+  max.addEventListener('change', function () { max.value = String(s.maxCount); });
+
+  pause.addEventListener('click', function () {
+    s.paused = !s.paused;
+    chrome.storage.local.set({ autoContinuePaused: s.paused });
+    paint();
+  });
+
+  document.getElementById('acReset').addEventListener('click', function () {
+    s.count = 0;
+    chrome.storage.local.set({ autoContinueCount: 0 });
+    paint();
+  });
+}
+
 // ---- personnalisation --------------------------------------------------------
 
 // Couleur d'accent par defaut de claude.ai (--cds-clay-emphasized). Sert de valeur affichee
@@ -287,8 +360,10 @@ function renderTheme(stored) {
 
 // ---- rendu -------------------------------------------------------------------
 
-chrome.storage.local.get(['usage', 'usageHistory', 'settings', 'status'].concat(THEME_KEYS)).then(function (o) {
+chrome.storage.local.get(['usage', 'usageHistory', 'settings', 'status']
+  .concat(THEME_KEYS).concat(AC_KEYS)).then(function (o) {
   renderSettings(o.settings);
+  renderAutoContinue(o);
   renderTheme(o);
   // Avant le garde sur "windows" : sinon le statut disparaitrait precisement quand l'usage est
   // indisponible, c'est-a-dire pendant une panne.

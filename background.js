@@ -13,6 +13,11 @@ importScripts('common.js');        // utilOf(), colorFor(), resetText(), USAGE_L
 importScripts('usage-source.js');  // usageUrl(), orgsUrl(), pickOrgId(), parseUsage()
 importScripts('status-source.js'); // STATUS_URL, parseStatus()
 
+// Auto-continue : fonctionnalite a part, qui ne partage rien avec ce qui precede. Ces deux
+// lignes sont tout son ancrage cote worker — les retirer la supprime entierement.
+importScripts('autocontinue-source.js'); // AC_KEYS, acSettings(), acMaxReached()
+importScripts('autocontinue-bg.js');     // alarme + sondage des onglets
+
 var TRACK = 'rgba(128,128,128,0.30)';
 
 // Ordre decroissant : on cherche le plus haut seuil franchi.

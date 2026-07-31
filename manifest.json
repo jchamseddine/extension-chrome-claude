@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Affiche l'usage de session (5h) et hebdomadaire (7j) de claude.ai, plus une estimation du contexte de la conversation en cours.",
   "minimum_chrome_version": "111",
-  "permissions": ["storage", "notifications", "alarms"],
+  "permissions": ["storage", "notifications", "alarms", "scripting"],
   "host_permissions": ["https://claude.ai/*", "https://*.claude.ai/*", "https://status.claude.com/*"],
   "background": {
     "service_worker": "background.js"
@@ -29,6 +29,21 @@
       "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
       "js": ["theme.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
+      "js": ["autocontinue-source.js", "autocontinue.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
+      "js": ["folders-source.js", "folders.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
+      "js": ["export-source.js", "export.js"],
+      "run_at": "document_idle"
     }
   ]
 }

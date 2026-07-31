@@ -9,9 +9,17 @@ Extension Chrome personnelle (Manifest V3, JS vanilla, aucun build step). Elle a
 3. le **statut de Claude** lu sur `status.claude.com` (claude.ai, Claude Code, API…), en
    section du popup.
 
-Elle permet aussi de **personnaliser le thème** de claude.ai (couleur d'accent, poids de
-police, coins et ombres, police de lecture), fonctionnalité totalement indépendante des
-précédentes.
+Elle permet aussi, via deux fonctionnalités totalement indépendantes des précédentes et l'une
+de l'autre :
+
+- de **personnaliser le thème** de claude.ai (couleur d'accent, poids de police, coins et
+  ombres, police de lecture) ;
+- de **relancer automatiquement** une réponse arrêtée par la limite de tool-use
+  (*auto-continue*) — désactivé par défaut, avec compteur de continuations et pause ;
+- de ranger les conversations dans des **dossiers personnalisés** dans la sidebar, sans rapport
+  avec les *Projects* natifs — ⚠️ la fonctionnalité la plus fragile du dépôt, voir sa section ;
+- d'**exporter une conversation** en Markdown ou en PDF, depuis un bouton à côté de
+  « Partager » — le contenu vient de l'API, jamais du DOM, donc jamais tronqué.
 
 Rien ne sort de la machine, sauf vers claude.ai et status.claude.com : tout est dans
 `chrome.storage.local`, aucun serveur tiers.
@@ -160,9 +168,16 @@ attend un objet fenêtre d'usage.
 | `content.js` | isolé | relais de secours : refait le fetch d'usage same-origin quand le SW est refusé |
 | `context-estimator.js` | isolé | tient l'estimation de contexte par conversation et affiche la pastille sur `/chat/*` |
 | `theme.js` | isolé | surcharge les tokens de thème du site — **indépendant du reste** |
+| `autocontinue.js` | isolé | lit le DOM et clique le bouton *Continue* — **indépendant du reste** |
 | `background.js` | service worker | sonde les deux API (usage 60 s, statut 5 min), écrit `usage` et `status`, dessine l'icône, notifie |
 | `usage-source.js` | SW | **seul** point d'adaptation à l'API d'usage : URL + `parseUsage()` |
 | `status-source.js` | SW | **seul** point d'adaptation à status.claude.com : URL + `parseStatus()` — **indépendant du reste** |
+| `autocontinue-source.js` | SW + page + popup | **seul** point d'adaptation de l'auto-continue : phrases + `acDecide()`, logique pure |
+| `autocontinue-bg.js` | SW | réveille `acTick()` dans chaque onglet claude.ai toutes les 5 s — **indépendant du reste** |
+| `folders-source.js` | page | **seul** point d'adaptation « données » des dossiers : uuid + CRUD, logique pure |
+| `folders.js` | isolé | insère les dossiers et **déplace** les items de la sidebar — ⚠️ **le plus fragile du dépôt** |
+| `export-source.js` | page | **seul** point d'adaptation de l'export : URL, `parseConversation()`, Markdown/HTML — logique pure |
+| `export.js` | isolé | bouton d'export dans l'en-tête, menu, téléchargement et impression — **indépendant du reste** |
 | `common.js` | SW + popup | seuils de couleur partagés (`utilOf`, `colorFor`) |
 | `popup.html` / `popup.js` | popup | les deux fenêtres d'usage, la projection, la section « Statut », les réglages |
 
@@ -177,6 +192,11 @@ Clés `chrome.storage.local` :
 - `settings` = `{ notifications: false }` — réglages du popup
 - `accentColor`, `fontWeightPreset`, `radiusPreset`, `fontFamily` — personnalisation du thème,
   quatre clés de premier niveau ; **toutes absentes** = thème d'origine intact (voir plus bas)
+- `autoContinueEnabled`, `autoContinueMaxCount`, `autoContinueCount`, `autoContinuePaused` —
+  auto-continue, quatre clés de premier niveau ; **toutes absentes** = désactivé (voir plus bas)
+- `folders` = `[{ id, name, color, collapsed }, …]` et `folderAssignments` =
+  `{ "<uuid>": "<id dossier>" }` — dossiers personnalisés de la sidebar ; **absentes** = aucun
+  dossier, tout reste dans « Récents » (voir plus bas)
 
 ### Sondage
 
@@ -402,7 +422,7 @@ capture renvoie `null` **sans mémoïser**, et `theme.js` retente sur `DOMConten
 **Le popup n'envoie rien aux onglets** : il écrit ou supprime les quatre clés, et chaque onglet
 réagit via `chrome.storage.onChanged` en **relisant les quatre** (un `remove` groupé produit
 alors un seul rendu cohérent). Tous les onglets claude.ai ouverts changent donc ensemble, sans
-rechargement, sans permission `scripting` ni `tabs`. « Réinitialiser » supprime les quatre clés,
+rechargement, sans passer par `chrome.scripting` ni `chrome.tabs`. « Réinitialiser » supprime les quatre clés,
 ce qui **retire** l'élément `<style>` au lieu de le vider — le thème d'origine redevient
 exactement ce qu'il était.
 
@@ -412,6 +432,328 @@ cela a été fait pour le bouton d'envoi. Les variables de fond (`--_gray-*`,
 `--cds-hsl-gray-*`, `--cds-oncolor-*`), celles de texte, ainsi que `--_brand-clay` et
 `--cds-hsl-clay` sont **hors périmètre** — ces deux dernières n'apparaissent pas dans la
 chaîne confirmée ci-dessus.
+
+### Auto-continue
+
+Quatrième fonctionnalité indépendante : quand une réponse bute sur la **limite de tool-use**,
+claude.ai affiche un bouton *Continue* qu'il faut cliquer à la main. `autocontinue.js` le fait
+à votre place. **Désactivée par défaut**, réglages dans le popup.
+
+Rien de commun avec `usage-source.js`, `status-source.js` ni `theme.js` : quatre clés dédiées,
+sa propre entrée `content_scripts`, et deux `importScripts` isolés en tête de `background.js`
+— c'est tout son ancrage, les retirer supprime la fonctionnalité.
+
+| Clé | Valeurs | Absente = |
+| --- | --- | --- |
+| `autoContinueEnabled` | `true` / `false` | désactivé |
+| `autoContinueMaxCount` | `1`-`999`, ou `0` | `0` = illimité |
+| `autoContinueCount` | entier ≥ 0 | `0` |
+| `autoContinuePaused` | `true` / `false` | pas en pause |
+
+Adaptation dans [`autocontinue-source.js`](autocontinue-source.js) — logique **pure**, aucun
+DOM, aucun `chrome.*` : c'est ce qui la rend testable telle quelle
+(`node test-autocontinue.js`). Les sélecteurs DOM, eux, sont en tête de
+[`autocontinue.js`](autocontinue.js), couvert par `node test-autocontinue-dom.js` sur un DOM
+bouchonné.
+
+#### Deux conditions cumulées
+
+La détection n'agit **jamais** sur un seul signal :
+
+1. un bouton *Continue* **visible** dans le DOM — un message qui parle de la limite sans
+   bouton veut dire que la réponse est finie, il n'y a rien à continuer ;
+2. une des six phrases caractéristiques dans le **dernier** message de l'assistant, et
+   **nulle part ailleurs** dans la conversation.
+
+La seconde moitié du point 2 est le garde-fou anti-faux-positif : une conversation dont le
+*sujet* est la limite de tool-use répète la phrase de message en message et s'auto-continuerait
+sans fin. Les six variantes (`tool-use limit`, `tool use limit`, `reached its tool`,
+`exhausted the tool`, `tool call limit`, `continuation needed`) viennent de
+[claude-autocontinue](https://github.com/timothy22000/claude-autocontinue) (MIT), qui les a
+relevées sur des messages réels ; elles sont comparées en minuscules et **en sous-chaîne**, la
+formulation autour changeant. Aucune variante française n'est codée : aucune n'a été capturée,
+et ce dépôt n'écrit pas de valeur devinée (même règle que `ORGS_PATH`).
+
+#### Deux déclencheurs, un seul chemin
+
+| Déclencheur | Où | Latence | Angle mort |
+| --- | --- | --- | --- |
+| `MutationObserver` (débounce 600 ms d'accalmie) | `autocontinue.js`, page | quasi instantanée | ses `setTimeout` sont **bridés** dès que l'onglet passe en arrière-plan (1 s min, puis 1/min après 5 min caché) |
+| sondage `chrome.scripting.executeScript` | `autocontinue-bg.js`, service worker | ≤ 5 s | onglet sans content script (ouvert avant l'installation) |
+
+Les deux appellent **la même** fonction `acTick()`, dans le monde isolé de l'onglet. Le
+verrou `acBusy` et le délai de garde de 5 s qu'elle porte rendent donc le double-clic
+impossible **par construction** : il n'y a qu'un détecteur, réveillé de deux façons — pas de
+protocole de réservation entre le worker et la page. C'est ce que verrouille le test
+*deux ticks simultanés (worker + page) : un seul clic*. C'est aussi pour ça que `autocontinue.js`
+n'est **pas** dans une IIFE : le worker injecte une fonction qui appelle `acTick()`, le nom
+doit être visible depuis le global du monde isolé (même contrainte que `theme.js`).
+
+`chrome.alarms` a un plancher d'une minute, bien trop lent pour une continuation : l'alarme
+`autocontinue-poll` ne sert qu'à **ressusciter** le worker, la cadence de 5 s vient d'un
+`setInterval` qui ne vit que tant que le worker vit. Chaque `executeScript` repousse la mise en
+veille, donc la boucle s'auto-entretient tant qu'il y a un onglet claude.ai. Elle n'est démarrée
+que si l'auto-continue est **actif, non en pause et sous son maximum** : désactivé, l'extension
+ne maintient rien en vie.
+
+#### `autoContinueMaxCount` : 0 signifie *illimité*
+
+Sans ambiguïté et **partout** — popup, page, service worker. Ce n'est pas une sentinelle
+arbitraire : c'est aussi ce que rend `acSettings()` quand la clé manque, vaut `null` ou est
+aberrante. Un maximum jamais configuré n'interdit donc **jamais** de continuer, ce qui est le
+comportement voulu pour un réglage absent.
+
+L'alternative — `0` = « aucune continuation autorisée » — aurait imposé une autre valeur pour
+« illimité » (`-1`, `null`) et transformé une clé absente en blocage silencieux.
+
+⚠️ Corollaire non négociable : une comparaison `count >= maxCount` **nue** bloquerait dès le
+premier appel quand `maxCount` vaut 0. Le court-circuit sur `AC_UNLIMITED` doit donc passer
+**avant** la comparaison, et il n'existe qu'un seul endroit dans le dépôt où cette comparaison a
+le droit de vivre : `acMaxReached()`.
+
+`autoContinueCount` absent et `autoContinueCount = 0` se comportent **strictement pareil**
+(`Number(undefined)` vaut `NaN`, que le test `isFinite` écarte). Le popup écrit quand même les
+quatre clés à l'activation, mais uniquement pour que le storage se lise sans ambiguïté à la
+main — pas pour corriger un comportement. Cinq tests fixent ce contrat, dont l'état exact relevé
+en usage réel.
+
+#### Compteur et notification
+
+Chaque continuation incrémente `autoContinueCount` et affiche un **toast dans la page**
+(bas-droite, au-dessus de la pastille de contexte, 4 s) — pas une `chrome.notifications` : une
+continuation est un événement de la conversation qu'on est en train de lire, pas une alerte
+système. Le popup montre `3 / 10 continuations déclenchées`, avec « Réinitialiser » pour
+remettre le compteur à zéro et « Pause » pour suspendre **sans toucher aux réglages**.
+
+### Dossiers personnalisés
+
+> ⚠️ **C'est la fonctionnalité la plus fragile du dépôt, et de loin.** Toutes les autres
+> s'appuient sur une *donnée* (API d'usage, Statuspage) ou sur des *variables CSS* du design
+> system. Celle-ci est la seule à manipuler la **structure DOM native** de claude.ai : elle
+> déplace de vrais nœuds de la sidebar. Un remaniement de la sidebar la casse — d'où le tableau
+> de sélecteurs ci-dessous, qui est le point de départ de toute réparation.
+
+Range les conversations dans des dossiers de couleur, insérés **au-dessus** de « Récents », sans
+aucun rapport avec les *Projects* natifs de claude.ai. Deux clés dédiées :
+
+| Clé | Forme | Absente = |
+| --- | --- | --- |
+| `folders` | `[{ id, name, color, collapsed }, …]` | aucun dossier |
+| `folderAssignments` | `{ "<uuid conversation>": "<id dossier>" }` | tout dans « Récents » |
+
+Une conversation non assignée **n'est pas touchée** : elle reste dans « Récents », à sa place.
+
+#### Tableau des sélecteurs
+
+À vérifier dans cet ordre le jour où les dossiers cessent de fonctionner. Ils sont tous en tête
+de [`folders.js`](folders.js), en constantes `CF_*`.
+
+| Sélecteur | Rôle | Fragilité |
+| --- | --- | --- |
+| `a[href^="/chat/"]` | **ancrage principal** — l'uuid se lit dans le `href`, il n'existe aucun data-attribute dédié | **faible** : c'est une URL, pas une classe |
+| `.df-drag-shiftable` | wrapper déplaçable, atteint par `link.closest(…)` | moyenne : classe applicative, mais pas utilitaire |
+| `.dframe-nav-scroll` | conteneur scrollable ; **absent = arrêt complet** | moyenne |
+| `.dframe-recents-by-mode` | wrapper des sections, point d'insertion | moyenne ; absent, on se rabat sur `.dframe-nav-scroll` avec un `console.warn` |
+| `aside.dframe-sidebar` | coque observée par le `MutationObserver` | faible : c'est la coque, elle survit aux re-rendus |
+
+Deux sélecteurs de la structure inspectée sont **délibérément inutilisés** :
+`div.group.relative[class*="rounded-"]` (le conteneur d'item) parce que sa classe est un rayon
+Tailwind arbitraire — `rounded-[var(--df-radius-pill)]` — et `div.group\/section` (la section)
+parce qu'une classe Tailwind échappée est exactement le genre d'ancrage qui casse. La section
+est **déduite du DOM** à la place : c'est le parent d'un item qui n'est dans aucun de nos blocs.
+
+#### Déplacer, jamais dupliquer
+
+Les items rangés dans un dossier sont les **vrais nœuds** de claude.ai, déplacés. Un clone
+perdrait les gestionnaires de clic et le menu contextuel natifs attachés par le site — c'est le
+compromis central de cette fonctionnalité, et la raison de sa fragilité.
+
+Quand un item part dans un dossier, un **marque-page** (`<div hidden data-cf-slot="<uuid>">`)
+reste à sa place exacte. L'en sortir le remet donc à sa position chronologique, et pas
+bêtement à la fin de « Récents ». Un re-rendu du site détruit les marque-pages avec le reste,
+ce qui est sans conséquence : après un re-rendu, les items non assignés sont déjà au bon endroit.
+
+⚠️ **L'ordre des opérations dans `cfReflow()` n'est pas cosmétique.** Les blocs dont le dossier
+a été supprimé sont retirés **après** la boucle de placement, jamais avant : à l'entrée de la
+passe ils contiennent encore leurs items, et les supprimer d'abord arracherait ces
+conversations du document jusqu'au prochain re-rendu du site. Le test *suppression du dossier :
+conversations libérées, AUCUNE perdue* verrouille ce point précis.
+
+#### Re-rendus et pagination
+
+La sidebar est une SPA : elle se re-rend à chaque navigation. Le rangement est donc réappliqué
+par un `MutationObserver` (débounce 120 ms) posé sur `aside.dframe-sidebar` — la coque, qui
+survit aux re-rendus — et **pas** un scan unique au chargement. Tant que la coque n'existe pas,
+on se rabat sur `documentElement`, puis on **resserre** dès qu'elle apparaît : sans ça on
+observerait tout le document en permanence, flux d'une réponse en cours compris.
+
+Le `takeRecords()` en fin de passe jette les mutations que le rangement vient lui-même de
+provoquer — sans lui, chaque rendu en déclencherait un autre, indéfiniment.
+
+Conséquence utile : une conversation plus ancienne qui **apparaît au scroll** (pagination) est
+rangée sans rechargement. La liste n'est pas virtualisée pour le nombre d'items actuellement
+observé (testé jusqu'à 21), mais le code ne le suppose nulle part.
+
+#### Interactions
+
+- **Glisser-déposer** natif du navigateur, aucune bibliothèque. Un `<a href>` est déjà
+  *draggable*, donc on ne pose pas `draggable="true"` : on ajoute seulement notre type de
+  donnée au `dragstart`, sans `preventDefault`, ce qui laisse le système de glissement du site
+  (`df-drag-shiftable`) recevoir ce qu'il attend quand le dépôt ne nous concerne pas. Déposer
+  sur un dossier assigne ; pour désassigner, une bande **« Retirer du dossier »** apparaît dans
+  notre bloc pendant le glissement d'une conversation rangée. Voir
+  [Dépôt : ne jamais toucher aux zones natives](#dépôt--ne-jamais-toucher-aux-zones-natives).
+- **« + »** en haut de la liste : `prompt` pour le nom, couleur attribuée automatiquement — la
+  première non utilisée de la palette de 8, pour que deux dossiers créés à la suite se
+  distinguent sans seconde question.
+- **Clic droit sur un dossier** : renommer, changer de couleur (8 pastilles), supprimer.
+  Supprimer **libère** ses conversations vers « Récents » et ne supprime **jamais** une
+  conversation — l'extension n'en a aucun moyen, et ne doit jamais en avoir. La confirmation le
+  dit explicitement, parce que c'est la question qu'on se pose devant un « Supprimer ».
+- **Clic sur l'en-tête** : replier / déplier. Le compteur affiche le nombre de conversations
+  *assignées*, qui peut dépasser le nombre visible si les plus anciennes ne sont pas chargées.
+
+#### Dépôt : ne jamais toucher aux zones natives
+
+> Corrigé après un bug vu en usage réel : déposer une conversation sur un dossier custom
+> l'**épinglait** dans la section native « Épinglé » au lieu de l'assigner.
+
+Les gestionnaires appelaient pourtant déjà `preventDefault()` et `stopPropagation()` — ce
+n'était donc pas la cause. Deux défauts réels, **chacun suffisant** à reproduire le symptôme :
+
+| Défaut | Pourquoi ça épinglait | Correction |
+| --- | --- | --- |
+| Le glissement était identifié par `dataTransfer.types` | Le site pose son propre `dragstart` et une implémentation de drag appelle couramment `clearData()` avant d'écrire **son** type, ce qui efface le nôtre. Notre `dragover` ne reconnaissait alors plus rien, n'appelait pas `preventDefault()`, et le dépôt n'était même pas **autorisé** sur nos blocs : le navigateur le renvoyait à la logique du site | `cfDragging`, posé au `dragstart`, fait foi ; `dataTransfer` ne sert plus qu'à *récupérer* l'uuid, en secours |
+| Écoute en phase de **bouillonnement** | Si le site écoute en phase de **capture** sur un ancêtre, son gestionnaire s'exécute *avant* le nôtre — et nos blocs sont à l'intérieur de `.dframe-nav-scroll`. `stopPropagation()` arrivait trop tard | Interception sur **`window` en capture** : le tout premier point de la trajectoire d'un événement, avant tout gestionnaire posé sur un descendant, quel que soit son ordre d'inscription |
+
+Conséquence volontaire : **plus aucun gestionnaire n'est posé sur un élément natif.** On n'agit
+que si la cible est dans notre sous-arbre *et* qu'un glissement de conversation est en cours.
+Partout ailleurs l'événement passe intact, donc la réorganisation et l'épinglage natifs
+fonctionnent exactement comme avant.
+
+C'est aussi pourquoi **désassigner ne se fait plus en déposant sur « Récents »** : poser un
+gestionnaire sur une section du site était précisément ce qui pouvait déclencher son épinglage.
+La bande « Retirer du dossier » est à nous, dans notre bloc, et n'apparaît que pendant le
+glissement d'une conversation déjà rangée.
+
+**Repli pointeur.** `df-drag-shiftable` (« les items s'écartent ») suggère un glissement au
+*pointeur* et non en HTML5 — auquel cas aucun `dragstart`/`dragover`/`drop` n'est émis et tout
+ce qui précède reste muet. Un repli sur `pointerdown`/`pointermove`/`pointerup` prend alors le
+relais, armé **uniquement** si aucun `dragstart` n'a été vu pour le geste en cours : les deux
+voies ne peuvent pas se déclencher ensemble, et c'est le navigateur qui tranche, pas nous. Après
+un dépôt capté au pointeur, un `keydown` Échap est envoyé au document — le site vient d'être
+privé de son `pointerup`, et Échap est la sortie conventionnelle des bibliothèques de drag pour
+annuler proprement un glissement en cours.
+
+#### Tests
+
+Toute la logique de rangement — parsing d'uuid, création, assignation, suppression — est dans
+[`folders-source.js`](folders-source.js), **pure** et testée par `node test-folders.js`.
+`folders.js` ne garde que le DOM. La séparation est délibérée : la partie qui cassera un jour ne
+doit pas entraîner avec elle la partie vérifiable.
+
+Le placement DOM lui-même a son propre harnais, [`test-folders-dom.js`](test-folders-dom.js),
+qui monte la structure du tableau ci-dessus dans jsdom et couvre les deux scénarios invisibles
+autrement : le re-rendu de la SPA et la conversation qui arrive au scroll. C'est le **seul**
+test du dépôt à avoir besoin d'une dépendance : sans `npm install jsdom` il **se saute** au lieu
+d'échouer, pour que le dépôt reste chargeable tel quel, sans `package.json` ni `node_modules`.
+
+Le dépôt y est couvert par un **espion** qui rejoue le gestionnaire du site : posé sur un
+ancêtre de nos blocs, dans les **deux** phases. Les tests vérifient qu'il n'est jamais appelé
+quand on dépose sur un dossier, et qu'il l'est bel et bien — liste d'appels exacte à l'appui —
+quand on dépose ailleurs. Son silence est donc une garantie, pas un faux négatif.
+
+⚠️ Une limite de jsdom à connaître : il **n'applique pas** la règle du navigateur selon laquelle
+un `drop` n'est émis que si le `dragover` correspondant a été neutralisé. Les tests vérifient
+donc *qui reçoit quoi*, pas l'arbitrage du navigateur. En vrai, le premier défaut du tableau
+ci-dessus a une conséquence de plus : le `drop` n'atteint jamais nos zones.
+
+Il ne remplace pas une vérification à la main sur claude.ai : il prouve la logique de placement,
+pas que les sélecteurs correspondent encore au vrai site — ça, seul le navigateur le dit.
+
+### Export de conversation
+
+Un bouton d'export à côté de « Partager », dans l'en-tête de conversation, avec deux sorties :
+**Markdown** et **PDF**. claude.ai n'expose aucun export natif — vérifié dans le menu « … » de
+la sidebar, celui du titre de conversation, et la modale de partage — donc rien n'est doublé.
+
+Aucune clé de storage : cette fonctionnalité ne stocke rien.
+
+#### Le contenu vient de l'API, pas du DOM
+
+C'est **la** décision de conception de ce module. Le GET
+`…/organizations/<org>/chat_conversations/<uuid>` est la seule réponse qui porte tout
+l'historique — le même endpoint que celui déjà intercepté pour l'estimation de contexte
+(voir l'en-tête de [`inject.js`](inject.js)), donc **confirmé par capture**.
+
+Scraper le DOM aurait obligé à dérouler toute la conversation avant d'exporter, et un export
+tronqué ne se voit pas : le fichier a l'air complet. Ici, **ou l'export est complet, ou il
+échoue en le disant**. Il n'y a pas de repli DOM, délibérément — un repli silencieusement
+tronqué serait pire que pas d'export du tout.
+
+⚠️ **L'uuid d'organisation n'est pas deviné.** `ORGS_PATH` étant la seule supposition non
+vérifiée du dépôt, en dépendre couplerait l'export au sondage d'usage et le ferait reposer sur
+un pari. Il est donc relevé dans les URL que la page a **réellement** appelées
+(`performance.getEntriesByType('resource')`), en deux niveaux :
+
+1. l'URL **exacte** que le site a utilisée pour cette conversation, query string comprise — on
+   hérite de ses paramètres sans avoir à les connaître ;
+2. à défaut, reconstruite à partir de n'importe quelle URL portant l'organisation (le site en
+   appelle en permanence, donc elle se trouve même si le GET de conversation est sorti du
+   tampon de Resource Timing, limité à 250 entrées).
+
+Si aucun des deux n'aboutit, l'export refuse de partir et demande de recharger l'onglet.
+
+| Sélecteur | Rôle |
+| --- | --- |
+| `div#dframe-header-actions-slot` | point d'insertion **stable** ; absent = arrêt propre |
+| `button[data-testid="wiggle-controls-actions-share"]` | voisin de placement **et** modèle de style |
+| `div[data-testid="chat-header"]` | observé par le `MutationObserver` |
+
+Le bouton **ne s'invente pas de style** : il copie la `className` du bouton « Partager » et la
+taille de son `<svg>`, donc rayon, états de survol et thème suivent le site sans qu'on ait à
+les connaître (même procédé que `folders.js` pour les classes de section). Sans bouton
+« Partager », il se rabat sur un style neutre et le signale en console. Il n'est posé que sur
+une conversation ouverte, et reposé après chaque re-rendu de l'en-tête.
+
+#### Markdown
+
+Le texte des messages est repris **verbatim** : les réponses de Claude *sont* du markdown,
+blocs de code et langages compris — les réécrire ne pourrait que les abîmer. Seul le titre est
+assaini, parce qu'il devient une ligne `#` qu'un retour à la ligne casserait. Les blocs qui ne
+sont pas du texte (`tool_use`, `tool_result`, `thinking`) sont écartés : un export doit se lire
+comme la conversation, pas comme sa trace d'exécution.
+
+#### PDF : `window.print()`, aucune bibliothèque
+
+Pas de jsPDF ni d'équivalent. On imprime un document autonome et Chrome propose *Enregistrer au
+format PDF*. L'impression passe par une **iframe hors écran** plutôt que par une fenêtre : pas
+de bloqueur de pop-up à affronter, et surtout `print()` n'imprime alors *que* ce document, pas
+la page claude.ai autour.
+
+Le markdown est rendu en HTML par un convertisseur volontairement **partiel** (blocs de code
+avec leur langage, titres, listes, citations, liens, gras/italique) — ce qui n'est pas reconnu
+ressort en paragraphe, jamais perdu. C'est le compromis assumé pour ne pas embarquer un
+analyseur markdown complet derrière un bouton d'impression.
+
+L'échappement HTML passe **toujours** avant le formatage : une conversation contenant
+`<script>` ne doit jamais redevenir une balise dans le document imprimé, et un lien
+`javascript:` n'est jamais rendu cliquable. Deux tests couvrent précisément ces deux cas.
+
+#### Nom de fichier
+
+`<titre> - AAAA-MM-JJ.md` (ou `.pdf`), avec un nettoyage visant l'union des interdits Windows,
+macOS et Linux : `<>:"/\|?*`, les caractères de contrôle, les points ou espaces finaux — que
+l'explorateur Windows tronque en silence — et les noms de périphériques DOS (`CON`, `NUL`,
+`COM1`…), que Windows refuse même suivis d'une extension. Titre vide ou entièrement filtré :
+repli sur `conversation`.
+
+#### Tests
+
+`node test-export.js` couvre la logique pure (32 tests) : génération du Markdown, échappement,
+rendu des blocs de code, nom de fichier, lecture de la réponse d'API.
+[`test-export-dom.js`](test-export-dom.js) vérifie l'insertion du bouton dans l'en-tête et
+**se saute** sans jsdom, comme `test-folders-dom.js`.
 
 ## Debug
 
@@ -427,6 +769,79 @@ chaîne confirmée ci-dessus.
 | `aucun onglet claude.ai ne répond` | l'onglet est antérieur au chargement de l'extension → le recharger |
 | `[status] sondage échoue :` | status.claude.com est injoignable — le popup masque simplement la section |
 | `[status] format de réponse inconnu … JSON reçu :` | Statuspage a changé de forme — corriger `parseStatus()`, avec un test dans `test-status-source.js` |
+| `[autocontinue] sondage échoue :` | la boucle du worker n'a pas pu lire le storage ou lister les onglets |
+
+Les dossiers, eux, parlent dans la console **de la page** claude.ai, une seule fois par cause
+pour ne pas noyer la console à chaque re-rendu :
+
+| Message | Ce que ça veut dire |
+| --- | --- |
+| `[folders] conteneur « .dframe-nav-scroll » introuvable après 8 s` | la sidebar a changé — rien n'a été inséré, voir le tableau des sélecteurs |
+| `[folders] wrapper « .dframe-recents-by-mode » introuvable` | dégradé, pas bloquant : les dossiers sont insérés directement dans le conteneur scrollable |
+| `[folders] aucun « .df-drag-shiftable » au-dessus du lien` | le lien est trouvé mais plus le wrapper déplaçable : plus rien n'est rangé |
+| `[export] point d'insertion « div#dframe-header-actions-slot » introuvable` | l'en-tête a changé — aucun bouton inséré |
+| `[export] bouton « …-share » introuvable` | dégradé, pas bloquant : le bouton prend un style neutre au lieu de copier celui du site |
+| `[export] format de réponse inconnu … JSON reçu :` | la réponse de conversation a changé de forme — corriger `parseConversation()`, avec un test dans `test-export.js` |
+| `[export] échec : …` | l'export s'est arrêté avant d'écrire quoi que ce soit ; la même phrase s'affiche en toast dans la page |
+
+#### Pourquoi l'auto-continue ne clique pas
+
+Deux consoles, deux moitiés de la réponse. **Commencer par celle du service worker** : c'est la
+seule qui parle quand la fonctionnalité est éteinte — dans ce cas rien d'autre ne tourne, ni le
+sondage ni le `MutationObserver` de la page.
+
+| Console du service worker | Ce que ça veut dire |
+| --- | --- |
+| `boucle arrêtée : auto-continue DÉSACTIVÉ (autoContinueEnabled absent ou false)` | la case du popup n'est pas cochée — **rien** ne tourne tant que cette clé n'est pas à `true` |
+| `boucle arrêtée : en pause` | bouton « Pause » du popup |
+| `boucle arrêtée : compteur maximum atteint : 5 / 5` | « Réinitialiser », ou passer le maximum à 0 (illimité) |
+| `actif, mais aucun onglet claude.ai ouvert` | la boucle tourne, il n'y a personne à sonder |
+| `actif — sondage de N onglet(s) toutes les 5 s` | tout va bien de ce côté : passer à la console de l'onglet |
+| `onglet 42 : pas de content script (recharger l'onglet)` | onglet ouvert avant le chargement de l'extension |
+
+Une fois la boucle active, le détail est dans la console **de l'onglet**. Elle ne parle que
+lorsqu'un bouton « Continue » est visible — ou qu'un bouton au bon libellé vient d'être écarté —
+et ne répète jamais un état identique :
+
+```
+[autocontinue] diagnostic (sw)
+  bouton « Continue »  : trouvé
+  messages assistant   : 12 lus
+  dernier message lu   : sélecteur .group\/message-row, index 11/11 — ancré au bouton Continue (fiable)
+  phrase de limite     : ABSENTE du dernier message
+  phrase plus haut     : non
+  compteur             : 0 / illimité
+  actif / en pause     : true / false
+  DÉCISION             : ignore — pas de phrase de limite dans le dernier message
+  dernier message (500 premiers caractères), pour relever la phrase réelle :
+    "Claude a atteint la limite d’utilisation d’outils pour cette réponse."
+```
+
+Les lignes qui tranchent :
+
+- **`bouton « Continue » : ÉCARTÉ — n au bon libellé mais jugé invisible`** — le bouton existe
+  mais `offsetParent` est nul. C'est le test de visibilité qu'il faut alors revoir, pas la
+  détection de phrase.
+- **`dernier message lu : … — ancré au bouton Continue (fiable)`** confirme que le texte capturé
+  vient bien de la ligne qui contient le bouton visible, pas d'un élément assistant-like plus bas
+  dans le document (carte de citation, aperçu d'historique…) qui aurait usurpé la position
+  « dernier » simplement en arrivant en dernier dans `querySelectorAll()`. Si la ligne dit à la
+  place **`dernier trouvé dans l'ordre du DOM (bouton non imbriqué — hypothèse à vérifier)`**,
+  l'ancrage a échoué et le texte lu n'est pas garanti correspondre au bon message — à vérifier à
+  l'œil avant de conclure quoi que ce soit sur la phrase de limite.
+- **`phrase de limite : ABSENTE du dernier message`** suivi du message recopié — c'est le cas
+  attendu sur une **interface en français**, dont aucune variante n'est connue (voir « Limites
+  connues »). Le message recopié est là précisément pour relever la formulation réelle et
+  l'ajouter à `AC_LIMIT_PHRASES`, avec un test dans `test-autocontinue.js`. C'est la seule
+  façon correcte de la compléter : relevée, jamais devinée.
+
+Chaque continuation écrit par ailleurs `[autocontinue] continuation 3 (page|sw)`, avec l'origine
+du déclencheur.
+Pour savoir pourquoi *rien* ne se passe, appeler `acTick('manuel')` dans cette même console,
+**après avoir basculé le sélecteur de contexte** de *top* vers celui de l'extension (les
+content scripts vivent dans un monde isolé) : la fonction renvoie toujours sa raison en clair (`aucun bouton Continue visible`,
+`phrase de limite déjà présente plus haut dans la conversation`, `compteur maximum atteint (10)`,
+`pas de content script (recharger l'onglet)`…).
 
 `inject.js` a un `var DEBUG = false;` en tête — le passer à `true` fait sortir `[usage] tap
 start` / `tap end` dans la console de **la page claude.ai**. Ça ne concerne plus que
@@ -485,6 +900,80 @@ chrome.storage.local.set({ status: { updatedAt: Date.now(), data: {
 - **À `document_start` les valeurs d'origine ne sont pas encore lisibles** : seule la couleur
   d'accent s'applique immédiatement. Poids, coins/ombres et police arrivent quelques centaines
   de millisecondes plus tard, quand les feuilles du site sont parsées.
+- **L'auto-continue repose sur ce que claude.ai *affiche*, pas sur une API.** Trois points de
+  rupture, tous dans `autocontinue.js` : le repérage des messages de l'assistant — le conteneur
+  `.group/message-row` (liste **virtualisée** : un scan ponctuel ne voit que ce qui est monté),
+  filtré au rôle assistant par la présence de `[data-testid="action-bar-retry"]` ou
+  `[data-testid="action-bar-read-aloud"]` dans sa barre d'actions (`action-bar-edit` marque au
+  contraire un message utilisateur ; `action-bar-copy` existe sur les deux rôles et n'est
+  **jamais** utilisé comme critère) — la reconnaissance du bouton par son libellé (`Continue`,
+  qui couvre au passage `Continuer`) — et la lecture du texte lui-même, qui doit ignorer toute
+  copie masquée pour l'accessibilité (`[aria-hidden="true"]`, `.sr-only`, `visually-hidden`…),
+  sans quoi le même passage se retrouve doublé. Un remaniement du balisage les casse en silence —
+  la détection ne se déclenchera simplement plus.
+- **Le « dernier message » s'ancre au bouton *Continue*, pas à l'ordre du DOM.**
+  `querySelectorAll('.group/message-row')` rend ses résultats dans l'ordre du document, qui ne
+  correspond pas forcément à l'ordre visuel de la conversation : un élément assistant-like
+  ailleurs sur la page (carte de citation, aperçu…) placé *après* le vrai dernier message dans le
+  DOM usurperait sinon la position « dernier ». `acLastAssistantRow()` retrouve donc la ligne qui
+  contient réellement le bouton visible via `.closest()`, et ne se replie sur le dernier élément
+  du tableau que si le bouton n'est imbriqué dans aucune ligne connue — repli non vérifié sur le
+  vrai balisage, signalé comme tel dans le journal de diagnostic (`dernier message lu`).
+- **Les six phrases de limite ne sont connues qu'en anglais.** Sur une interface claude.ai en
+  français, la condition (2) échouera : aucune variante française n'a été capturée, et ce dépôt
+  ne code pas de valeur devinée. À relever sur un vrai message, puis à ajouter dans
+  `AC_LIMIT_PHRASES` avec un test dans `test-autocontinue.js`.
+- **`document.execCommand('insertText')` est volontairement absent.** La référence
+  [claude-autocontinue](https://github.com/timothy22000/claude-autocontinue) s'en sert pour
+  *écrire* dans l'éditeur (son mode « minimize tokens ») : c'est la seule méthode fiable pour
+  déclencher les événements synthétiques React/ProseMirror de l'input de claude.ai — un
+  `value = …` suivi d'un `dispatchEvent` ne suffit pas, React ne voit rien. C'est aussi une API
+  **dépréciée**, qui casserait si Anthropic changeait l'implémentation de l'éditeur, au même
+  titre que les autres pièges consignés ici. Cette extension ne tape donc **rien** : elle se
+  limite au clic sur le bouton, qui ne dépend pas de l'éditeur. Si un mode « prompt de
+  continuation » est ajouté un jour, il faudra passer par `execCommand` et hériter de cette
+  fragilité.
+- **Un onglet ouvert avant l'installation n'a pas d'auto-continue** : ni `MutationObserver`, ni
+  `acTick()` à réveiller par `executeScript`. Même limite que le relais de secours du sondage et
+  que le thème — recharger l'onglet.
+- **La boucle de 5 s maintient le service worker éveillé** tant qu'un onglet claude.ai est
+  ouvert *et* que l'auto-continue est actif, non en pause et sous son maximum. C'est le prix
+  d'une cadence sous le plancher d'une minute de `chrome.alarms` ; désactivé, rien n'est
+  maintenu en vie.
+- **Le compteur peut sous-compter avec plusieurs onglets.** `autoContinueCount` est incrémenté
+  par un lire-modifier-écrire côté page : deux onglets qui continuent à la même milliseconde
+  peuvent perdre une unité. Sans conséquence sur la limite elle-même, qui reste évaluée à
+  chaque tick.
+- **Les dossiers déplacent des nœuds que React gère.** C'est le risque assumé de la
+  fonctionnalité : si le site supprime un item (conversation effacée) pendant qu'il se trouve
+  dans un de nos blocs, son `removeChild` porte sur un nœud qui n'est plus chez lui et peut
+  lever. Rien ne le prévient depuis une extension — c'est le prix du choix « déplacer plutôt que
+  dupliquer », qui est ce qui préserve les clics et menus contextuels natifs. En cas de sidebar
+  cassée, vider `folders` et `folderAssignments` remet tout d'aplomb.
+- **Un léger scintillement au changement de conversation est normal** : le site re-rend sa
+  liste, remet brièvement les items rangés dans « Récents », et le `MutationObserver` les
+  redéplace 120 ms plus tard.
+- **Le compteur d'un dossier peut dépasser le nombre visible** : il compte les conversations
+  *assignées*, dont certaines ne sont pas encore chargées dans le DOM (pagination au scroll).
+- **L'implémentation de glissement de claude.ai n'a pas été identifiée** (HTML5 ou pointeur).
+  Les deux voies sont couvertes et s'excluent mutuellement, mais si un jour une conversation se
+  retrouvait **à la fois** rangée dans un dossier *et* épinglée nativement, ce serait le signe
+  que les deux systèmes se déclenchent ensemble. Le remède serait alors d'ajouter, après notre
+  dépôt, un retrait explicite de la zone d'épinglage — et non d'élargir l'interception, qui
+  casserait le drag natif ailleurs. Rien de tel n'a été observé.
+- **La forme de la réponse de conversation n'a jamais été capturée.** L'*endpoint* l'est (c'est
+  celui de l'estimation de contexte), mais pas la structure de son JSON :
+  `parseConversation()` accepte les deux conventions plausibles (`chat_messages`/`messages`,
+  `sender`/`role`, `text`/`content[]`) plutôt que d'en parier une seule, et le dit en console
+  si aucune ne correspond. C'est le premier endroit à corriger si l'export échoue alors que le
+  bouton s'affiche.
+- **Le PDF dépend d'une iframe `srcdoc`, qui hérite de la CSP de claude.ai.** Aucun script n'y
+  est injecté (`print()` est appelé de l'extérieur), mais si la politique du site interdisait
+  un jour les styles en ligne, le PDF sortirait sans mise en forme — le texte, lui, resterait
+  complet. L'export Markdown, qui ne dépend d'aucune CSP, reste la sortie la plus sûre.
+- **Le rendu markdown → HTML du PDF est partiel** : ni tableaux, ni notes de bas de page, ni
+  HTML brut inline. Ce qui n'est pas reconnu ressort en paragraphe — jamais perdu, mais pas
+  mis en forme. Le fichier `.md`, lui, est le contenu exact.
 - **Les noms de tokens du design system ne sont pas garantis stables.** Si un jour l'accent ne
   change plus, c'est `--cds-clay-emphasized` / `--cds-clay` qu'il faut re-confirmer en
   inspectant le bouton d'envoi ; il n'y a que `theme.js` à corriger. Pour les trois autres

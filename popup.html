@@ -80,6 +80,22 @@
       color: inherit;
       cursor: pointer;
     }
+    /* Auto-continue : bloc autonome, comme la fonctionnalite. Rien d'autre ne s'en sert. */
+    #acToggle { display: flex; gap: 7px; align-items: center; cursor: pointer; font-size: 12px; }
+    .ac-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+    .ac-row > .label { flex: 1; }
+    #acMax, #acPause, #acReset {
+      font: inherit;
+      font-size: 12px;
+      padding: 4px 9px;
+      border: 1px solid rgba(128, 128, 128, .35);
+      border-radius: 5px;
+      background: none;
+      color: inherit;
+      cursor: pointer;
+    }
+    #acMax { width: 60px; cursor: text; }
+    #acPause[disabled] { opacity: .45; cursor: default; }
     .opt { margin-top: 10px; }
     .ticks {
       display: flex;
@@ -116,6 +132,21 @@
       Activer les notifications (seuils et fin de reset)
     </label>
   </div>
+  <div id="autocontinue" class="rule">
+    <label id="acToggle">
+      <input type="checkbox" id="acEnabled">
+      Activer l'auto-continue
+    </label>
+    <div class="ac-row">
+      <span class="label">Continuations max (0 = illimit&eacute;)</span>
+      <input type="number" id="acMax" min="0" max="999" step="1">
+    </div>
+    <div class="ac-row"><span id="acCount" class="label"></span></div>
+    <div class="ac-row">
+      <button type="button" id="acPause">Pause</button>
+      <button type="button" id="acReset">R&eacute;initialiser</button>
+    </div>
+  </div>
   <div id="theme" class="rule">
     <div class="label">Personnalisation</div>
     <div class="accent-row">
@@ -144,6 +175,7 @@
   </div>
   <footer id="footer" class="rule" hidden></footer>
   <script src="common.js"></script>
+  <script src="autocontinue-source.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
