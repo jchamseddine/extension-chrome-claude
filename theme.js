@@ -322,12 +322,14 @@ function themeRender(state) {
     return needsOriginals && !orig;
   }
 
+  var created = false;
   if (!el) {
     el = document.createElement('style');
     el.id = THEME_STYLE_ID;
     // A document_start, <head> peut ne pas encore exister ; un <style> pose sur <html>
     // s'applique quand meme.
     (document.head || document.documentElement).appendChild(el);
+    created = true;
   }
 
   // !important : le site pose ces tokens sur :root, on doit gagner quel que soit l'ordre
@@ -347,7 +349,92 @@ function themeRender(state) {
     console.log('[theme] regle appliquee', css);   // TEMPORAIRE
   }
 
+  themeAudit(state, el, created);   // TEMPORAIRE
+  themeWatchStyle();                // TEMPORAIRE
+
   return needsOriginals && !orig;
+}
+
+// TEMPORAIRE — diagnostic du bug de propagation intermittente (la couleur ne suit pas quand une
+// generation est en cours dans l'onglet cible). Trace, juste APRES l'ecriture, ce qui separe les
+// deux hypotheses en une seule ligne :
+//
+//   concordant: false + attachee: false -> la balise a ete retiree du DOM (hypothese « re-rendu
+//                                          du site pendant le streaming »)
+//   concordant: false + attachee: true  -> la balise est en place mais une regle plus specifique
+//                                          gagne (hypothese « classe temporaire sur .cds-root »)
+//   concordant: true                    -> le navigateur applique bien notre couleur ; si l'ecran
+//                                          ne bouge pas, le probleme n'est ni ici ni dans le CSS
+//
+// La valeur CALCULEE est la seule preuve qui compte : elle dit ce que le navigateur applique
+// vraiment, pas ce qu'on croit avoir ecrit. Lire --cds-clay-emphasized ne peut pas polluer la
+// memoisation de themeCaptureOriginals() : cette variable n'est dans aucune des quatre listes
+// qu'elle capture (poids, ombres, polices, rayon).
+function themeAudit(state, el, created) {
+  if (!state.accentColor) return;
+
+  var applied;
+  try {
+    applied = getComputedStyle(document.documentElement)
+      .getPropertyValue('--cds-clay-emphasized').trim();
+  } catch (e) {
+    applied = '(illisible : ' + ((e && e.message) || e) + ')';
+  }
+
+  console.log('[theme] audit', {
+    demande: state.accentColor,
+    calcule: applied,
+    concordant: applied.toLowerCase() === state.accentColor.toLowerCase(),
+    attachee: el.isConnected !== false,
+    retrouveeParId: document.getElementById(THEME_STYLE_ID) === el,
+    balise: created ? 'creee' : 'reutilisee'
+  });
+}
+
+// ---- surveillance de la balise (TEMPORAIRE) ------------------------------------------------
+
+// Repond a UNE question, et n'en corrige aucune : la balise est-elle RETIREE du DOM par un
+// re-rendu du site ? Volontairement separe du reste — il n'observe qu'un retrait de noeud, il ne
+// participe pas au rendu.
+//
+// Pour le promouvoir en correctif permanent une fois l'hypothese confirmee, passer
+// THEME_REINJECT a true : la balise est alors reposee immediatement apres chaque retrait, a
+// partir de l'etat courant, au lieu d'attendre le prochain storage.onChanged.
+var THEME_REINJECT = false;
+
+var themeWatcher = null;
+var themeWatchedHead = false;
+
+function themeWatchStyle() {
+  if (typeof MutationObserver === 'undefined' || !document.documentElement) return;
+
+  if (!themeWatcher) {
+    themeWatcher = new MutationObserver(function (records) {
+      for (var i = 0; i < records.length; i++) {
+        var removed = records[i].removedNodes;
+        for (var j = 0; j < removed.length; j++) {
+          if (!removed[j] || removed[j].id !== THEME_STYLE_ID) continue;
+
+          console.warn('[theme] balise RETIREE du DOM à ' + new Date().toISOString() +
+            ' (t+' + Math.round(typeof performance !== 'undefined' ? performance.now() : 0) +
+            ' ms) — theme actif : ' + (themeCurrent.accentColor || 'aucun') +
+            (THEME_REINJECT ? ' — reinjection' : ' — AUCUNE reinjection (observateur de debug)'));
+
+          if (THEME_REINJECT) themeRender(themeCurrent);
+        }
+      }
+    });
+    themeWatcher.observe(document.documentElement, { childList: true });
+  }
+
+  // <head> peut ne pas exister au premier appel (document_start) : on l'ajoute des qu'il
+  // apparait. childList sans subtree sur les deux seuls endroits ou la balise peut vivre —
+  // pendant un streaming l'arbre entier mute en continu, un subtree couterait cher pour
+  // surveiller un unique noeud.
+  if (!themeWatchedHead && document.head) {
+    themeWatchedHead = true;
+    themeWatcher.observe(document.head, { childList: true });
+  }
 }
 
 // ---- cablage --------------------------------------------------------------------------------
@@ -390,13 +477,16 @@ function themeApply(state) {
   if (themeRender(state)) themeScheduleRetries();
 }
 
-var themeFirstLoad = true;
-
-function themeLoad() {
+function themeLoad(cause) {
   chrome.storage.local.get(THEME_KEYS).then(function (o) {
-    // TEMPORAIRE — une seule fois : sur un storage vide, aucune regle n'est posee et rien
-    // d'autre ne serait trace, ce qui est exactement ce qui avait rendu la panne muette.
-    if (themeFirstLoad) { themeFirstLoad = false; console.log('[theme] etat lu', o); }
+    // TEMPORAIRE — trace CHAQUE lecture, avec sa cause.
+    //
+    // Ce log etait auparavant limite au premier chargement (var themeFirstLoad). Le voir en
+    // console ne prouvait donc PAS qu'une propagation avait eu lieu — c'etait le log du
+    // chargement de la page — alors que c'est exactement la conclusion qu'on en tirait en
+    // diagnostiquant le bug de propagation intermittente. Un point de mesure qui ne mesure pas
+    // ce qu'on croit est pire que pas de point de mesure du tout : il oriente vers l'aval.
+    console.log('[theme] etat lu (' + cause + ')', o);
     themeApply(themeReadState(o));
   }, function (e) {
     // Pas de catch muet : un echec de lecture ici est indistinguable de cles absentes, et
@@ -406,7 +496,8 @@ function themeLoad() {
 }
 
 if (typeof chrome !== 'undefined' && chrome.storage) {
-  themeLoad();
+  themeLoad('chargement initial');
+  themeWatchStyle();   // TEMPORAIRE
 
   chrome.storage.onChanged.addListener(function (changes, area) {
     if (area !== 'local') return;
@@ -414,6 +505,6 @@ if (typeof chrome !== 'undefined' && chrome.storage) {
     // Relecture complete plutot que lecture du seul delta : le reset supprime les quatre cles
     // d'un coup, un evenement suffit alors a produire un unique rendu coherent. Apres un
     // remove(), les cles sont absentes et themeReadState les ramene toutes a null.
-    if (touched) themeLoad();
+    if (touched) themeLoad('storage.onChanged');
   });
 }

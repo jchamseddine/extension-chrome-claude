@@ -429,6 +429,58 @@ rechargement, sans passer par `chrome.scripting` ni `chrome.tabs`. « Réinitial
 ce qui **retire** l'élément `<style>` au lieu de le vider — le thème d'origine redevient
 exactement ce qu'il était.
 
+##### ⏳ Propagation intermittente pendant une génération — en cours de diagnostic
+
+Symptôme signalé : un changement de couleur propagé depuis un autre onglet **échoue plus
+souvent** quand une génération de réponse est en cours dans l'onglet cible. **Cause non
+confirmée à ce jour** — cette section décrit l'instrumentation en place, pas un correctif.
+
+⚠️ **Le premier point de mesure était faux, et orientait vers la mauvaise moitié du problème.**
+Le log `[theme] etat lu` était verrouillé par une variable `themeFirstLoad` : il ne s'imprimait
+**qu'une fois par frame**, au chargement de la page. Le voir dans la console d'un onglet qui ne
+se met pas à jour ne prouvait donc **rien** sur `storage.onChanged` — c'était le log du
+chargement initial, et on en concluait à tort que le listener s'était déclenché et que le
+problème était forcément en aval. Le log nomme désormais sa cause
+(`chargement initial` / `storage.onChanged`) et s'imprime à **chaque** lecture. Leçon générale :
+un point de mesure dont la portée est plus étroite qu'elle n'en a l'air est pire que pas de
+point de mesure, parce qu'il produit une conclusion au lieu d'un silence.
+
+Deux instruments, tous deux marqués `TEMPORAIRE` :
+
+| Log | Ce qu'il dit |
+| --- | --- |
+| `[theme] etat lu (<cause>)` | une lecture du storage a eu lieu, et **pourquoi** |
+| `[theme] audit {…}` | ce que le navigateur applique **réellement**, juste après l'écriture |
+| `[theme] balise RETIREE du DOM à <ISO>` | le site a retiré notre `<style>`, avec l'horodatage |
+
+L'audit est la ligne qui tranche, parce qu'il relit la valeur **calculée** de
+`--cds-clay-emphasized` au lieu de faire confiance à ce qu'on croit avoir écrit :
+
+| `concordant` | `attachee` | Lecture |
+| --- | --- | --- |
+| `false` | `false` | la balise a été **retirée** → hypothèse « re-rendu du site pendant le streaming » |
+| `false` | `true` | balise en place mais **une règle plus spécifique gagne** → chercher une classe temporaire posée sur `.cds-root` pendant la génération |
+| `true` | `true` | le navigateur applique bien la couleur : le problème n'est ni dans `themeRender` ni dans le CSS |
+
+Lire `--cds-clay-emphasized` ici est sans effet de bord : cette variable n'appartient à aucune
+des quatre listes capturées par `themeCaptureOriginals()`, elle ne peut donc pas polluer sa
+mémoïsation.
+
+**La porte de correction est déjà écrite mais fermée** : `THEME_REINJECT`, à `false`. À `true`,
+l'observateur passe de constat à correctif et repose la balise immédiatement après chaque
+retrait, au lieu d'attendre le prochain `storage.onChanged`. Elle n'est **pas** ouverte par
+défaut, parce que la première hypothèse n'est pas confirmée et qu'ouvrir une porte pour une
+cause supposée masquerait le vrai symptôme au lieu de le résoudre. Les deux états sont testés :
+fermé, le retrait est constaté sans réparation ; ouvert, la balise revient.
+
+⚠️ L'observateur lui-même est testé, et ce n'est pas du zèle : **un observateur muet parce que
+cassé se lirait exactement comme « hypothèse infirmée »**. C'est le même contresens que celui du
+log ci-dessus. `test-theme-dom.js` vérifie donc qu'un retrait réel déclenche bien le message.
+
+L'observateur surveille `<html>` et `<head>` en `childList` **sans** `subtree` : ce sont les deux
+seuls endroits où la balise peut vivre, et pendant un streaming l'arbre entier mute en continu —
+un `subtree` coûterait cher pour surveiller un nœud unique.
+
 ⚠️ **Si un élément de marque ne change pas de couleur**, ne pas ajouter de variable au
 hasard : inspecter cet élément précis pour confirmer sa vraie chaîne de résolution, comme
 cela a été fait pour le bouton d'envoi. Les variables de fond (`--_gray-*`,
@@ -860,6 +912,9 @@ pour ne pas noyer la console à chaque re-rendu :
 | `[export] bouton « …-share » introuvable` | dégradé, pas bloquant : le bouton prend un style neutre au lieu de copier celui du site |
 | `[export] format de réponse inconnu … JSON reçu :` | la réponse de conversation a changé de forme — corriger `parseConversation()`, avec un test dans `test-export.js` |
 | `[export] échec : …` | l'export s'est arrêté avant d'écrire quoi que ce soit ; la même phrase s'affiche en toast dans la page |
+| `[theme] etat lu (<cause>)` | ⏳ **temporaire** : une lecture du storage, avec sa cause (`chargement initial` ou `storage.onChanged`) |
+| `[theme] audit {…}` | ⏳ **temporaire** : `concordant` dit si le navigateur applique vraiment la couleur demandée — voir le tableau de lecture dans la section Thème |
+| `[theme] balise RETIREE du DOM à …` | ⏳ **temporaire** : le site a retiré notre `<style>`. Si ça apparaît pendant une génération, l'hypothèse « re-rendu pendant le streaming » est confirmée et `THEME_REINJECT` peut passer à `true` |
 
 #### Pourquoi l'auto-continue ne clique pas
 

@@ -49,7 +49,11 @@ function boot(headCss, stored, opts) {
 
   var win = dom.window;
   var warns = [];
-  win.console = { warn: function (m) { warns.push(String(m)); }, log: function () {} };
+  var logs = [];
+  win.console = {
+    warn: function (m) { warns.push(String(m)); },
+    log: function (m, d) { logs.push(String(m) + ' ' + JSON.stringify(d === undefined ? '' : d)); }
+  };
   win.chrome = {
     storage: {
       local: { get: function () { return Promise.resolve(stored || {}); } },
@@ -67,6 +71,8 @@ function boot(headCss, stored, opts) {
   return {
     win: win,
     warns: warns,
+    logs: logs,
+    el: function () { return win.document.getElementById(STYLE_ID); },
     css: function () {
       var el = win.document.getElementById(STYLE_ID);
       return el ? el.textContent : null;
@@ -155,6 +161,78 @@ test('préréglage « carré » : rayon à 0 et ombres supprimées', function ()
     var css = w.css();
     assert.ok(css.indexOf('--cds-radius:0 !important') !== -1, css);
     assert.ok(css.indexOf('--cds-shadow-sm:none !important') !== -1, css);
+  });
+});
+
+// ---- instrumentation du bug de propagation intermittente (TEMPORAIRE) ----------------------
+// Ces tests couvrent les POINTS DE MESURE eux-memes. Ce n'est pas du zele : un observateur muet
+// parce que casse se lirait exactement comme « hypothese infirmee », et c'est ce contresens-la
+// qui a deja coute un tour de diagnostic avec le log « etat lu » verrouille au premier
+// chargement. Un instrument qu'on n'a pas teste ne vaut pas mieux que pas d'instrument.
+
+test('l\'observateur détecte le retrait de la balise par le site', function () {
+  var w = boot('', { accentColor: '#3f6ac6' });
+  return w.settle().then(function () {
+    var el = w.el();
+    assert.ok(el, 'balise absente avant le retrait');
+    el.parentNode.removeChild(el);            // ce que ferait un re-rendu du site
+    return w.settle(30);
+  }).then(function () {
+    assert.ok(w.warns.some(function (m) { return m.indexOf('balise RETIREE du DOM') !== -1; }),
+      'le retrait n\'a PAS été détecté — un observateur muet se lit à tort comme « hypothèse ' +
+      'infirmée » : ' + w.warns.join(' | '));
+  });
+});
+
+// Le retrait doit etre CONSTATE, pas repare, tant que THEME_REINJECT vaut false. Ce test fige
+// la porte : le jour ou on la promeut, il echoue et rappelle de le mettre a jour.
+test('THEME_REINJECT à false : le retrait est constaté, pas réparé', function () {
+  var w = boot('', { accentColor: '#3f6ac6' });
+  return w.settle().then(function () {
+    assert.strictEqual(w.win.THEME_REINJECT, false, 'la porte de réinjection a été promue');
+    w.el().parentNode.removeChild(w.el());
+    return w.settle(30);
+  }).then(function () {
+    assert.strictEqual(w.el(), null, 'la balise a été réinjectée alors que la porte est fermée');
+  });
+});
+
+// Le contre-test de la promotion : avec la porte ouverte, la balise revient. Il prouve que
+// promouvoir THEME_REINJECT suffit vraiment, sans avoir a le decouvrir en production.
+test('THEME_REINJECT à true : la balise est reposée après un retrait', function () {
+  var w = boot('', { accentColor: '#3f6ac6' });
+  return w.settle().then(function () {
+    w.win.THEME_REINJECT = true;
+    w.el().parentNode.removeChild(w.el());
+    return w.settle(30);
+  }).then(function () {
+    var el = w.el();
+    assert.ok(el, 'la balise n\'a pas été reposée');
+    assert.ok(el.textContent.indexOf('--cds-clay-emphasized:#3f6ac6') !== -1, el.textContent);
+  });
+});
+
+// Le log dont la portee etait fausse : il doit nommer sa cause, sinon le voir en console ne
+// prouve rien sur l'origine de la lecture.
+test('chaque lecture de storage est tracée, avec sa cause', function () {
+  var w = boot('', { accentColor: '#3f6ac6' });
+  return w.settle().then(function () {
+    assert.ok(w.logs.some(function (m) { return m.indexOf('etat lu (chargement initial)') !== -1; }),
+      w.logs.join(' | '));
+  });
+});
+
+// L'audit doit rapporter la valeur CALCULEE, pas celle qu'on croit avoir ecrite : c'est elle qui
+// separe « balise retiree » de « regle plus specifique qui gagne ».
+test('l\'audit rapporte la concordance entre couleur demandée et calculée', function () {
+  var w = boot('', { accentColor: '#3f6ac6' });
+  return w.settle().then(function () {
+    var audit = w.logs.filter(function (m) { return m.indexOf('[theme] audit') === 0; });
+    assert.strictEqual(audit.length, 1, 'un audit par rendu attendu : ' + w.logs.join(' | '));
+    assert.ok(audit[0].indexOf('"demande":"#3f6ac6"') !== -1, audit[0]);
+    assert.ok(audit[0].indexOf('"calcule"') !== -1, audit[0]);
+    assert.ok(audit[0].indexOf('"concordant"') !== -1, audit[0]);
+    assert.ok(audit[0].indexOf('"attachee":true') !== -1, audit[0]);
   });
 });
 
