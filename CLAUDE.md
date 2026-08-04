@@ -39,6 +39,17 @@ le piège d'unité (`utilization`/`percent` en 0-100, pas en fraction 0-1). Test
 été capturée — voir la section dédiée du README si le sondage échoue avant même d'atteindre
 `.../usage`.
 
+⚠️ `theme.js` a **deux** entrées `content_scripts`. La seconde vise `https://a.claude.ai/*` avec
+`all_frames: true` : le spinner « plein écran » (gros astérisque isolé) est rendu dans une iframe
+sur ce sous-domaine, où le script n'était jamais injecté — `all_frames` vaut `false` par défaut,
+et c'était ça le blocage, pas le domaine (`https://*.claude.ai/*` le couvrait déjà, y compris
+dans `host_permissions`). Ne pas remplacer ça par un `all_frames: true` sur l'entrée principale :
+ça injecterait aussi le thème dans les autres iframes du site (rendus d'artefacts). L'entrée
+principale porte un `exclude_matches` symétrique pour que les deux jeux restent disjoints —
+modifier l'un sans l'autre provoque une double exécution. C'est la seule entrée du dépôt couplée
+à un nom de domaine précis : si Anthropic le renomme, le spinner cessera **silencieusement** de
+suivre la couleur.
+
 Quatre fonctionnalités s'ajoutent, indépendantes des trois sources ci-dessus et les unes des
 autres : la **personnalisation du thème** (`theme.js`), l'**auto-continue**
 (`autocontinue-source.js` + `autocontinue.js` + `autocontinue-bg.js`), qui clique le bouton

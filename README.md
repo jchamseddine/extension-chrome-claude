@@ -167,7 +167,7 @@ attend un objet fenêtre d'usage.
 | `inject.js` | MAIN | patch de `fetch` et de l'History API, tap SSE, comptage de caractères |
 | `content.js` | isolé | relais de secours : refait le fetch d'usage same-origin quand le SW est refusé |
 | `context-estimator.js` | isolé | tient l'estimation de contexte par conversation et affiche la pastille sur `/chat/*` |
-| `theme.js` | isolé | surcharge les tokens de thème du site — **indépendant du reste** |
+| `theme.js` | isolé | surcharge les tokens de thème du site — **indépendant du reste** ; seul module aussi injecté dans l'iframe `a.claude.ai` (spinner plein écran) |
 | `autocontinue.js` | isolé | lit le DOM et clique le bouton *Continue* — **indépendant du reste** |
 | `background.js` | service worker | sonde les deux API (usage 60 s, statut 5 min), écrit `usage` et `status`, dessine l'icône, notifie |
 | `usage-source.js` | SW | **seul** point d'adaptation à l'API d'usage : URL + `parseUsage()` |
@@ -328,8 +328,10 @@ résultats de recherche web. Le vrai contexte est donc toujours plus grand que c
 ### Personnalisation du thème
 
 Fonctionnalité à part : `theme.js` ne partage rien avec le reste de l'extension (ni
-`usage-source.js`, ni `background.js`, ni `common.js`), et a sa propre entrée
-`content_scripts` dans le manifest pour pouvoir être retirée d'un bloc.
+`usage-source.js`, ni `background.js`, ni `common.js`), et a ses propres entrées
+`content_scripts` dans le manifest pour pouvoir être retirée d'un bloc. Deux entrées, pas une :
+la seconde vise l'iframe de rendu `a.claude.ai` — voir *Le spinner « plein écran » vit dans une
+iframe* plus bas.
 
 Quatre réglages, quatre clés de premier niveau (pas dans l'objet `settings`, réservé aux
 notifications) :
@@ -378,7 +380,8 @@ La couleur de survol est calculée en JS : hex → HSL, **+9 points absolus de l
 `#c6613f` (L 51,2 %) → `#d97757` (L 59,6 %), soit +8,4 points. En absolu et non en relatif :
 un facteur multiplicatif écrase l'écart sur les teintes sombres. Exemples :
 `#c6613f → #d17e62`, `#3f6ac6 → #6285d1`, `#20304f → #2d4470`. Testé par
-`node test-theme.js`.
+`node test-theme.js` (calculs purs) et `node test-theme-dom.js` (ce qui est réellement écrit
+dans un document donné ; jsdom optionnel).
 
 #### Poids, coins/ombres, police : dérivés des valeurs d'origine
 
@@ -432,6 +435,67 @@ cela a été fait pour le bouton d'envoi. Les variables de fond (`--_gray-*`,
 `--cds-hsl-gray-*`, `--cds-oncolor-*`), celles de texte, ainsi que `--_brand-clay` et
 `--cds-hsl-clay` sont **hors périmètre** — ces deux dernières n'apparaissent pas dans la
 chaîne confirmée ci-dessus.
+
+#### Le spinner « plein écran » vit dans une iframe, sur un autre domaine
+
+Le gros astérisque isolé, affiché juste après l'envoi d'un message avant que le texte de la
+réponse apparaisse, ne suivait pas la couleur personnalisée — alors que le spinner **compact**
+(petite icône + texte de statut), lui, la suivait déjà. Diagnostic **confirmé par inspection** :
+ce sont deux éléments différents, dans deux documents différents.
+
+| | Spinner compact | Spinner plein écran |
+| --- | --- | --- |
+| Où | document principal `claude.ai` | iframe `https://a.claude.ai/isolated-segment.html` |
+| Quoi | `<svg fill="…">` référençant `--cds-clay` / `--cds-clay-emphasized` | rendu dans un document séparé, cross-origin |
+| Pourquoi il suivait / ne suivait pas | `theme.js` s'exécute dans ce document | `theme.js` ne s'y exécutait **jamais** |
+
+Ce n'était donc **pas** une variable CSS de plus à surcharger — la piste par défaut, et la
+mauvaise. La chaîne `--cds-clay*` était la bonne depuis le début ; elle n'était simplement pas
+appliquée dans ce document-là.
+
+⚠️ **Le domaine était déjà couvert ; ce qui manquait, c'est `all_frames`.** Les `matches` du
+manifest utilisent `https://*.claude.ai/*`, qui inclut déjà `a.claude.ai`. Mais `all_frames`
+vaut **`false` par défaut** : un content script ne tourne que dans le frame principal. L'iframe
+étant un sous-frame, `theme.js` n'y était jamais injecté. D'où une entrée dédiée :
+
+```json
+{ "matches": ["https://a.claude.ai/*"], "js": ["theme.js"],
+  "run_at": "document_start", "all_frames": true }
+```
+
+Elle est **dédiée** plutôt que `all_frames: true` posé sur l'entrée `claude.ai` existante : ça
+injecterait aussi `theme.js` dans *tous* les autres iframes du site (rendus d'artefacts compris),
+où il n'a rien à faire. L'entrée existante porte en contrepartie
+`"exclude_matches": ["https://a.claude.ai/*"]`, pour que les deux jeux soient **disjoints** : sans
+ça, une navigation de premier niveau vers `a.claude.ai` exécuterait `theme.js` deux fois dans le
+même monde isolé (listener `storage.onChanged` en double). `host_permissions` couvrait déjà le
+sous-domaine (`https://*.claude.ai/*`) : **rien à y changer**.
+
+**Seul `theme.js` atteint cette iframe.** Les autres modules (`inject.js`, `content.js`,
+`autocontinue.js`, `folders.js`, `export.js`) gardent `all_frames` à `false` et n'ont donc aucun
+moyen de s'y exécuter, bien que leur `https://*.claude.ai/*` corresponde au domaine. Côté
+injection programmatique, `chrome.scripting.executeScript` d'`autocontinue-bg.js` ne passe pas
+`allFrames` non plus, et ne vise donc que le frame principal. Une iframe de rendu de contenu n'a
+ni sidebar, ni en-tête, ni bouton *Continue* : rien à y faire.
+
+⚠️ **Cette entrée est nommément couplée à `a.claude.ai`** — c'est la seule du manifest qui
+dépende d'un nom de domaine précis plutôt que du joker `*.claude.ai`. Si Anthropic renomme ou
+déplace ce sous-domaine de rendu, le spinner plein écran cessera silencieusement de suivre la
+couleur, **sans aucun message d'erreur** : côté page principale tout continuera de marcher. Le
+symptôme à reconnaître est exactement celui d'origine — compact coloré, plein écran non coloré.
+La vérification est alors d'inspecter l'iframe pour relever son nouveau domaine et de mettre à
+jour les deux endroits (`matches` de l'entrée dédiée **et** `exclude_matches` de l'autre).
+
+`theme.js` n'a eu **aucune modification à subir** pour ce contexte réduit : ses gardes
+existantes suffisent déjà. L'accent ne dépend d'aucune valeur d'origine, il s'écrit donc même
+dans un document sans tokens `--cds-*` ; les trois réglages dérivés sont gardés par `&& orig` et
+ne s'appliquent que si la capture a réussi ; un document encore sans `<body>` fait renvoyer
+`null` à la capture, sans mémoïser. C'est ce que verrouille
+[`test-theme-dom.js`](test-theme-dom.js) (7 tests, jsdom optionnel comme les autres harnais DOM).
+
+Si le spinner reste non coloré malgré cette entrée, **ne pas deviner une variable de plus** :
+ça voudra dire qu'un autre obstacle existe dans cette iframe (une CSP de sandbox qui refuse
+aussi le `<style>` injecté, par exemple), et c'est *lui* qu'il faudra inspecter.
 
 ### Auto-continue
 
