@@ -1,2 +1,5 @@
-# Config locale de Claude Code (permissions de la machine), pas de l'extension
-.claude/settings.local.json
+# Artefacts de tooling, pas du code de l'extension : reglages locaux de la machine et caches
+# d'outils. .claude/ englobe l'ancienne entree .claude/settings.local.json, qui devenait
+# redondante, et couvre aussi .claude/skills (2,9 Mo) qui n'a rien a faire dans le depot.
+.claude/
+.impeccable/
