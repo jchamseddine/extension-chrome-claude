@@ -1004,6 +1004,70 @@ chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
 } } } });
 ```
 
+#### Provoquer une notification de reset sans attendre un vrai reset
+
+Le bloc ci-dessus ne suffit pas pour le reset : `isReset()` compare le sondage **précédent** au
+sondage courant, donc il faut **deux `set` successifs** — c'est la paire `oldValue`/`newValue` de
+`chrome.storage.onChanged` qui porte l'information, pas un état isolé. Toujours depuis la console
+du service worker :
+
+```js
+// 1. Notifications actives, et compteurs pré-calés pour que SEULE la notif de reset sorte
+//    (threshold: 75 empêche l'étape 2 de déclencher en plus un franchissement de seuil).
+await chrome.storage.local.set({
+  settings: { notifications: true },
+  notifyState: { windows: { '5h': { threshold: 75, overLimit: false },
+                            '7d': { threshold: 0,  overLimit: false } }, overage: false }
+});
+
+// 2. État « avant » : fenêtre 5 h bien remplie, borne A.
+const A = Math.floor(Date.now() / 1000) + 3600;
+await chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
+  '5h': { utilization: 0.76, resets_at: A },
+  '7d': { utilization: 0.43, resets_at: A + 200000 }
+} } } });
+
+// 3. État « après » : nouvelle borne ET chute franche -> reset détecté, une notification.
+await chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
+  '5h': { utilization: 0.02, resets_at: A + 18000 },
+  '7d': { utilization: 0.43, resets_at: A + 200000 }
+} } } });
+```
+
+Attendu : **une seule** notification, « Session — 5 h : reset effectué ». La fenêtre 7 j garde sa
+borne, donc elle ne notifie pas — ce qui vérifie du même coup que les deux fenêtres sont bien
+évaluées séparément.
+
+⚠️ Trois conditions faciles à rater, toutes imposées par `isReset()` :
+
+| Contrainte | Pourquoi | Conséquence si ratée |
+| --- | --- | --- |
+| `utilization` en **fraction 0-1** | c'est la forme *après* `parseUsage()`, qui divise par 100 | `0.76` écrit `76` → `utilOf()` borne à 1, la chute n'est plus détectable |
+| moins de **10 min** entre les étapes 2 et 3 | `RESET_MAX_AGE_MS` : au-delà, Chrome dormait et on annoncerait un reset vieux de plusieurs heures | aucune notification |
+| `resets_at` **différent** entre les deux | une chute seule est une correction de mesure, pas une nouvelle fenêtre | aucune notification |
+
+Le sondage réel tourne toutes les minutes et réécrit `usage` : enchaîner les trois étapes sans
+traîner, sinon un vrai sondage s'intercale entre 2 et 3 et casse la paire.
+
+Contrôles négatifs, à partir de l'étape 2 — dans les deux cas **rien** ne doit apparaître :
+
+```js
+// Chute franche mais borne INCHANGÉE -> correction de mesure, pas un reset.
+await chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
+  '5h': { utilization: 0.02, resets_at: A }, '7d': { utilization: 0.43, resets_at: A + 200000 }
+} } } });
+
+// Nouvelle borne mais SANS chute -> l'API a juste bougé sa borne.
+await chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
+  '5h': { utilization: 0.74, resets_at: A + 18000 }, '7d': { utilization: 0.43, resets_at: A + 200000 }
+} } } });
+```
+
+Pour rejouer le test, il suffit de relancer depuis l'étape 2 : `A` est recalculé sur l'horloge,
+donc la nouvelle borne diffère de celle mémorisée dans `notifyState.notifiedReset` et l'anti-spam
+ne bloque pas. Rejouer la **même** borne, en revanche, ne notifie qu'une fois — c'est justement
+ce que garantit l'anti-spam.
+
 Même méthode pour la section « Statut », qui est le plus souvent verte :
 
 ```js
