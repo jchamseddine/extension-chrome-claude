@@ -449,18 +449,29 @@ Deux instruments, tous deux marqués `TEMPORAIRE` :
 
 | Log | Ce qu'il dit |
 | --- | --- |
-| `[theme] etat lu (<cause>)` | une lecture du storage a eu lieu, et **pourquoi** |
-| `[theme] audit {…}` | ce que le navigateur applique **réellement**, juste après l'écriture |
-| `[theme] balise RETIREE du DOM à <ISO>` | le site a retiré notre `<style>`, avec l'horodatage |
+| `[theme] etat lu (<cause>) — accent=… poids=… rayon=… police=…` | une lecture du storage a eu lieu, et **pourquoi** |
+| `[theme] audit — demande=… calcule=… concordant=… attachee=…` | ce que le navigateur applique **réellement**, juste après l'écriture |
+| `[theme] balise RETIREE du DOM à <ISO> (t+… ms)` | le site a retiré notre `<style>`, avec l'horodatage |
+
+Les trois sont des **lignes de texte plates, pas des objets** : la console de Chrome affiche les
+objets repliés et tronqués, et ils se copient mal. Ces logs sont faits pour être relevés à la
+main et recollés tels quels dans un rapport, donc leur lisibilité brute prime sur leur structure.
+Un test le fige (`assert` qu'aucune accolade n'apparaît dans l'audit).
 
 L'audit est la ligne qui tranche, parce qu'il relit la valeur **calculée** de
 `--cds-clay-emphasized` au lieu de faire confiance à ce qu'on croit avoir écrit :
 
 | `concordant` | `attachee` | Lecture |
 | --- | --- | --- |
-| `false` | `false` | la balise a été **retirée** → hypothèse « re-rendu du site pendant le streaming » |
-| `false` | `true` | balise en place mais **une règle plus spécifique gagne** → chercher une classe temporaire posée sur `.cds-root` pendant la génération |
-| `true` | `true` | le navigateur applique bien la couleur : le problème n'est ni dans `themeRender` ni dans le CSS |
+| `NON` | `NON` | la balise a été **retirée** → hypothèse « re-rendu du site pendant le streaming » |
+| `NON` | `oui` | balise en place mais **une règle plus spécifique gagne** → chercher une classe temporaire posée sur `.cds-root` pendant la génération |
+| `OUI` | `oui` | le navigateur applique bien la couleur : le problème n'est ni dans `themeRender` ni dans le CSS |
+
+⚠️ **Ordre obligatoire avant tout relevé** : recharger l'**extension** depuis
+`chrome://extensions`, *puis* faire F5 sur les onglets. Un onglet ouvert avant le rechargement de
+l'extension n'a plus de content script du tout, et un onglet rechargé avant elle exécute encore
+l'ancien code — dans les deux cas ces logs sont absents, ce qui se lit à tort comme « la
+propagation n'a rien déclenché ».
 
 Lire `--cds-clay-emphasized` ici est sans effet de bord : cette variable n'appartient à aucune
 des quatre listes capturées par `themeCaptureOriginals()`, elle ne peut donc pas polluer sa
@@ -913,7 +924,7 @@ pour ne pas noyer la console à chaque re-rendu :
 | `[export] format de réponse inconnu … JSON reçu :` | la réponse de conversation a changé de forme — corriger `parseConversation()`, avec un test dans `test-export.js` |
 | `[export] échec : …` | l'export s'est arrêté avant d'écrire quoi que ce soit ; la même phrase s'affiche en toast dans la page |
 | `[theme] etat lu (<cause>)` | ⏳ **temporaire** : une lecture du storage, avec sa cause (`chargement initial` ou `storage.onChanged`) |
-| `[theme] audit {…}` | ⏳ **temporaire** : `concordant` dit si le navigateur applique vraiment la couleur demandée — voir le tableau de lecture dans la section Thème |
+| `[theme] audit — demande=… calcule=… concordant=…` | ⏳ **temporaire** : `concordant` dit si le navigateur applique vraiment la couleur demandée — voir le tableau de lecture dans la section Thème |
 | `[theme] balise RETIREE du DOM à …` | ⏳ **temporaire** : le site a retiré notre `<style>`. Si ça apparaît pendant une génération, l'hypothèse « re-rendu pendant le streaming » est confirmée et `THEME_REINJECT` peut passer à `true` |
 
 #### Pourquoi l'auto-continue ne clique pas

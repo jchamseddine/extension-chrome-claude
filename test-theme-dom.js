@@ -229,10 +229,13 @@ test('l\'audit rapporte la concordance entre couleur demandée et calculée', fu
   return w.settle().then(function () {
     var audit = w.logs.filter(function (m) { return m.indexOf('[theme] audit') === 0; });
     assert.strictEqual(audit.length, 1, 'un audit par rendu attendu : ' + w.logs.join(' | '));
-    assert.ok(audit[0].indexOf('"demande":"#3f6ac6"') !== -1, audit[0]);
-    assert.ok(audit[0].indexOf('"calcule"') !== -1, audit[0]);
-    assert.ok(audit[0].indexOf('"concordant"') !== -1, audit[0]);
-    assert.ok(audit[0].indexOf('"attachee":true') !== -1, audit[0]);
+    assert.ok(audit[0].indexOf('demande=#3f6ac6') !== -1, audit[0]);
+    assert.ok(audit[0].indexOf('calcule=#3f6ac6') !== -1, audit[0]);
+    assert.ok(audit[0].indexOf('concordant=OUI') !== -1, audit[0]);
+    assert.ok(audit[0].indexOf('attachee=oui') !== -1, audit[0]);
+
+    // Une ligne de texte, pas un objet : c'est ce qui la rend copiable depuis la console.
+    assert.strictEqual(audit[0].indexOf('{'), -1, 'l\'audit doit rester plat : ' + audit[0]);
   });
 });
 

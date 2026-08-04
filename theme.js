@@ -381,14 +381,15 @@ function themeAudit(state, el, created) {
     applied = '(illisible : ' + ((e && e.message) || e) + ')';
   }
 
-  console.log('[theme] audit', {
-    demande: state.accentColor,
-    calcule: applied,
-    concordant: applied.toLowerCase() === state.accentColor.toLowerCase(),
-    attachee: el.isConnected !== false,
-    retrouveeParId: document.getElementById(THEME_STYLE_ID) === el,
-    balise: created ? 'creee' : 'reutilisee'
-  });
+  // Une seule ligne de TEXTE, pas un objet : la console de Chrome affiche les objets replies et
+  // tronques, et ils se copient mal. Ce log est fait pour etre releve a la main et recolle tel
+  // quel dans un rapport — sa lisibilite brute compte plus que sa structure.
+  console.log('[theme] audit — demande=' + state.accentColor +
+    ' calcule=' + (applied || '(vide)') +
+    ' concordant=' + (applied.toLowerCase() === state.accentColor.toLowerCase() ? 'OUI' : 'NON') +
+    ' attachee=' + (el.isConnected !== false ? 'oui' : 'NON') +
+    ' retrouveeParId=' + (document.getElementById(THEME_STYLE_ID) === el ? 'oui' : 'NON') +
+    ' balise=' + (created ? 'creee' : 'reutilisee'));
 }
 
 // ---- surveillance de la balise (TEMPORAIRE) ------------------------------------------------
@@ -486,7 +487,9 @@ function themeLoad(cause) {
     // chargement de la page — alors que c'est exactement la conclusion qu'on en tirait en
     // diagnostiquant le bug de propagation intermittente. Un point de mesure qui ne mesure pas
     // ce qu'on croit est pire que pas de point de mesure du tout : il oriente vers l'aval.
-    console.log('[theme] etat lu (' + cause + ')', o);
+    console.log('[theme] etat lu (' + cause + ') — accent=' + (o.accentColor || 'aucun') +
+      ' poids=' + (o.fontWeightPreset || '-') + ' rayon=' + (o.radiusPreset || '-') +
+      ' police=' + (o.fontFamily || '-'));
     themeApply(themeReadState(o));
   }, function (e) {
     // Pas de catch muet : un echec de lecture ici est indistinguable de cles absentes, et
