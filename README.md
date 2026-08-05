@@ -682,6 +682,11 @@ de [`folders.js`](folders.js), en constantes `CF_*`.
 | `.dframe-nav-scroll` | conteneur scrollable ; **absent = arrêt complet** | moyenne |
 | `.dframe-recents-by-mode` | wrapper des sections, point d'insertion | moyenne ; absent, on se rabat sur `.dframe-nav-scroll` avec un `console.warn` |
 | `aside.dframe-sidebar` | coque observée par le `MutationObserver` | faible : c'est la coque, elle survit aux re-rendus |
+| *parent du premier `button` de l'item qui n'est pas le nôtre* | conteneur de contrôles où se pose le bouton **« − »** | moyenne ; absent, le bouton n'est pas inséré et le retrait par glisser-déposer reste seul disponible (`console.warn`) |
+
+Ce dernier n'est **pas** ciblé par `button[aria-label^="Plus d'options pour"]`, qui dépendrait de
+la langue de l'interface, ni par ses classes, qui sont utilitaires (`.absolute.opacity-0…`) :
+il est déduit du seul bouton natif de la ligne, quel que soit son libellé.
 
 Deux sélecteurs de la structure inspectée sont **délibérément inutilisés** :
 `div.group.relative[class*="rounded-"]` (le conteneur d'item) parce que sa classe est un rayon
@@ -730,15 +735,151 @@ observé (testé jusqu'à 21), mais le code ne le suppose nulle part.
   sur un dossier assigne ; pour désassigner, une bande **« Retirer du dossier »** apparaît dans
   notre bloc pendant le glissement d'une conversation rangée. Voir
   [Dépôt : ne jamais toucher aux zones natives](#dépôt--ne-jamais-toucher-aux-zones-natives).
-- **« + »** en haut de la liste : `prompt` pour le nom, couleur attribuée automatiquement — la
-  première non utilisée de la palette de 8, pour que deux dossiers créés à la suite se
-  distinguent sans seconde question.
+- **Bouton « − »** sur une conversation **rangée** : la sort du dossier en un clic, sans geste de
+  glissement. Il appelle exactement la même désassignation que le dépôt sur la bande, donc la
+  conversation retrouve elle aussi sa place chronologique dans « Récents » via son marque-page.
+  Il n'apparaît **jamais** sur un item de « Récents » — il n'y aurait aucun dossier à quitter.
+  Il est inséré **dans le conteneur de contrôles natif de la ligne**, celui du « … » : c'est ce
+  qui lui donne gratuitement la même apparition au survol et au focus (variants Tailwind
+  `group-hover:` / `group-focus-within:` portés par la ligne), sans qu'on gère une seule opacité.
+  ⚠️ Ce conteneur est en `position:absolute` : **il ne pousse rien**. La seule chose qui empêche
+  le titre de courir dessous est la place que le lien lui réserve à droite, et le site la
+  dimensionne pour le seul « … ». Y ajouter un bouton a donc fait passer le titre **sous** les
+  contrôles — dans les dossiers uniquement, « Récents » n'ayant rien de plus à loger. La réserve
+  est donc recalculée pour *deux* contrôles sur `.cf-body a[href^="/chat/"]`, avec la troncature
+  reposée au passage : sans effet si le lien la porte déjà, mais nécessaire si le site masque le
+  débordement par un dégradé, qui ne couvrirait plus la bonne zone. Délibérément large plutôt que
+  juste — trop de réserve tronque un peu tôt et ne se voit pas, pas assez ramène le bug.
+  ⚠️ Son clic est intercepté sur **`window` en capture**, comme le dépôt, et le bouton lui-même ne
+  porte **aucun** gestionnaire — voir [Le premier clic qui ne faisait
+  rien](#le-premier-clic-qui-ne-faisait-rien). Ne pas y revenir : un gestionnaire posé sur le
+  bouton est en phase de bouillonnement, donc à la merci du premier `stopPropagation()` venu.
+- **« + »** en haut de la liste : modale de saisie (champ vide, bouton « Créer »), couleur
+  attribuée automatiquement — la première non utilisée de la palette de 8, pour que deux dossiers
+  créés à la suite se distinguent sans seconde question. Il fait 24 px de côté, comme le « … »
+  natif — le bandeau « DOSSIERS » n'a donc plus de padding vertical propre : sinon les deux
+  hauteurs s'additionnaient.
 - **Clic droit sur un dossier** : renommer, changer de couleur (8 pastilles), supprimer.
   Supprimer **libère** ses conversations vers « Récents » et ne supprime **jamais** une
   conversation — l'extension n'en a aucun moyen, et ne doit jamais en avoir. La confirmation le
   dit explicitement, parce que c'est la question qu'on se pose devant un « Supprimer ».
+  Menu et modales copient leurs équivalents natifs — voir [Menu et modales : copier le natif sans
+  en dépendre](#menu-et-modales--copier-le-natif-sans-en-dépendre).
 - **Clic sur l'en-tête** : replier / déplier. Le compteur affiche le nombre de conversations
   *assignées*, qui peut dépasser le nombre visible si les plus anciennes ne sont pas chargées.
+
+#### Menu et modales : copier le natif sans en dépendre
+
+Les composants flottants de cette fonctionnalité **copient un composant natif précis** de
+claude.ai, au lieu d'être peints en couleurs relatives comme le reste du fichier. Un élément
+flottant qui ne ressemble à rien de ce qui l'entoure se voit immédiatement — contrairement à un
+bandeau de section, qui se fond dans la sidebar.
+
+| Notre composant | Modèle natif copié | Avant |
+| --- | --- | --- |
+| Menu du clic droit sur un dossier | menu « … » d'une conversation (`div[role="menu"]`, `rounded-card bg-surface-3 shadow-panel`) | fond `#1c1c1e` en dur, sombre même en thème clair |
+| Modale de saisie — création et renommage | modale de renommage d'une conversation (`div[role="dialog"]`, boîte de 400 px, `shadow-panel-lg`, fond assombri) | `window.prompt` |
+| Confirmation de suppression | même boîte, sans champ | `window.confirm` |
+
+Ces trois-là sont des composants du **navigateur** : ils ne sont pas seulement laids, ils
+s'affichent tout en haut de la fenêtre, loin du dossier qu'on vient de viser, et ne suivent ni le
+thème de claude.ai ni celui posé par `theme.js`. **Il n'en reste aucun** dans cette
+fonctionnalité.
+
+##### Une coque, deux modales
+
+Une **saisie** et une **confirmation** partagent la coque (`cfShell()` : overlay, boîte, titre,
+barre de boutons, Échap, clic sur le fond, frappes retenues) et **rien d'autre** — corps
+différent, garde-fou différent, touche Entrée différente. D'où deux fonctions minces au-dessus
+plutôt qu'une seule à paramètres optionnels, qui serait plus longue à lire que les deux réunies.
+
+| | `cfDialog()` — saisie | `cfConfirm()` — confirmation |
+| --- | --- | --- |
+| Corps | champ texte, borné à `FOLDER_NAME_MAX` | message, pas de champ |
+| Bouton d'action | primaire foncé, **grisé** tant que le nom ne survit pas au nettoyage | rouge d'alerte, **jamais** grisé — il n'y a rien à valider |
+| Focus à l'ouverture | le champ, texte présélectionné | **« Annuler »** |
+| Entrée | valide | referme, via le bouton focalisé |
+| Échap, « Annuler », clic sur le fond | ferment sans agir | idem |
+
+Deux écarts assumés par rapport au natif, chacun dans un sens :
+
+- **Entrée valide la saisie.** La modale native exige un clic, ce qui se défend pour un
+  formulaire et pas pour un champ d'une seule ligne.
+- **Entrée ne confirme pas une suppression.** C'est « Annuler » qui prend le focus, donc Entrée
+  *et* Échap referment sans rien détruire et confirmer demande un geste explicite — l'inverse de
+  `window.confirm`, dont Entrée valide. Le garde-fou d'une confirmation n'est pas dans la saisie,
+  il est dans le geste demandé.
+
+⚠️ Le garde-fou de la saisie (`folderNameSubmittable()`) doit rester aligné sur **les deux**
+écritures qu'il protège : un « Créer » actif sur un nom que `folderCreate()` jette fermerait la
+modale sans qu'aucun dossier n'apparaisse, ce qui se lit comme une création réussie. Deux tests
+purs vérifient l'équivalence dans les deux sens, création et renommage.
+
+Le texte de la confirmation vit dans `folders-source.js` (`folderDeleteMessage()`) et pas dans le
+DOM : c'est du texte qui dépend d'un compte, donc quelque chose qui peut être faux, donc quelque
+chose qui se teste — accord singulier/pluriel, cas du dossier vide, et la phrase constante
+« Aucune conversation ne sera supprimée » qui répond à *la* question qu'on se pose devant un
+bouton « Supprimer ».
+
+##### Tokens du site avec repli en dur
+
+Chaque couleur, rayon et ombre de ces deux composants passe par `var(--cds-x, <valeur observée>)`.
+Les noms de tokens sont **déduits** de leurs classes Tailwind (`bg-surface-3` → `--cds-surface-3`),
+sur le modèle de la seule chaîne confirmée par inspection, `bg-fill-brand` → `--cds-fill-brand`
+(voir [Couleur d'accent](#couleur-daccent)).
+
+⚠️ Déduits, donc faillibles — mais **un nom erroné ne casse rien** : la valeur observée prend le
+relais. C'est ce qui rend la déduction acceptable ici alors qu'elle ne l'est pas pour `theme.js`,
+qui lui **écrit** ces variables (« ne pas ajouter de variable au hasard »). Lire avec repli est
+sans risque ; écrire au jugé ne l'est pas. Un test verrouille l'invariant : *aucun token du site
+n'est utilisé sans valeur de repli*.
+
+| Notre variable | Token lu | Repli clair | Repli sombre |
+| --- | --- | --- | --- |
+| `--cf-surface` | `--cds-surface-3` | `#fff` | `#2f2f2c` |
+| `--cf-text` | `--cds-text-primary` | `#0b0b0b` | `#f5f5f4` |
+| `--cf-hover` | `--cds-fill-ghost-hover` | noir 6 % | blanc 10 % |
+| `--cf-field` | `--cds-fill-field` | noir 3 % | blanc 6 % |
+| `--cf-ring` | `--cds-shadow-field-ring` | liseré interne 1 px | idem, clair |
+| `--cf-card` | `--cds-radius-card` | `12px` | — |
+| `--cf-danger` | *aucun* — voir ci-dessous | `#b42318` | — |
+| `--cf-panel`, `--cf-panel-lg` | `--cds-shadow-panel{,-lg}` | 3 couches (liseré + 2 ombres portées) | ombres plus denses |
+
+⚠️ **Volontairement pas `--cds-radius` ni `--cds-shadow-{sm,md,lg}`**, les seuls tokens que le
+dépôt connaisse déjà : ce sont les tokens de **base**, et rien ne confirme qu'ils valent le
+`rounded-card` / `shadow-panel` observés sur ces deux composants-là — la question n'a pas pu être
+tranchée sans inspecter le site. Les prendre pour équivalents ferait diverger notre modale de la
+modale native qu'elle copie, soit exactement le défaut corrigé ici. Ils sont en plus déjà
+multipliés par `theme.js` pour le réglage « coins/ombres », alors que les composants natifs
+copiés, eux, ne bougent pas.
+
+Le mode sombre est donc couvert **deux fois** : par le token du site quand il existe (il suit le
+réglage de claude.ai), et sinon par un repli sous `@media (prefers-color-scheme: dark)` — la
+préférence *système*, faute de moyen fiable de lire celle du site. Repli de repli, jamais la
+source principale. Le bouton primaire de la modale, lui, ne nomme aucune couleur : il est
+l'**inverse** de la boîte (`background: var(--cf-text); color: var(--cf-surface)`), donc foncé
+sur clair en thème clair et l'inverse en thème sombre, sans qu'on ait à savoir dans quel mode
+on est.
+
+⚠️ **`--cf-danger` est le seul à ne lire aucun token du site**, et c'est délibéré : les autres
+noms sont déduits de classes *réellement observées* sur le composant copié, alors qu'aucun bouton
+de suppression de claude.ai n'a été inspecté. Déduire un `--cds-fill-danger` sans avoir rien vu
+serait exactement la « variable au hasard » que le README interdit ailleurs — et l'ajouter reste
+une ligne le jour où la vraie convention du site est relevée. `#b42318` porte du blanc à ~7:1,
+donc une seule valeur suffit dans les deux modes.
+
+Les **icônes** du menu ne copient pas le natif : claude.ai passe par une police de ligatures
+propriétaire (`Anthropicons-Variable`), qu'on ne réplique pas. On garde le trait SVG
+`currentColor` des autres boutons de l'extension (`export.js`), au gabarit natif de 20 px. Seuls
+le conteneur et la mise en forme des items (icône + libellé tronqué, `role="menu"` /
+`role="menuitem"`) copient le natif.
+
+⚠️ **Toutes les frappes faites dans la modale sont arrêtées à l'entrée** (`stopPropagation` sur
+`keydown`/`keyup`/`keypress` de l'overlay) : claude.ai écoute le clavier sur le document pour ses
+raccourcis, et taper `/` ou `e` dans un nom de dossier ne doit pas en déclencher un. C'est la même
+préoccupation que le reste du fichier, dans l'autre sens — ici on **retient** nos événements au
+lieu d'intercepter les siens, donc le bouillonnement suffit : ils partent de notre champ et
+passent forcément par l'overlay avant d'en sortir.
 
 #### Dépôt : ne jamais toucher aux zones natives
 
@@ -772,6 +913,48 @@ un dépôt capté au pointeur, un `keydown` Échap est envoyé au document — l
 privé de son `pointerup`, et Échap est la sortie conventionnelle des bibliothèques de drag pour
 annuler proprement un glissement en cours.
 
+#### Le premier clic qui ne faisait rien
+
+> Corrigé après un bug vu en usage réel : le **premier** clic sur le bouton « − » ne faisait rien,
+> le suivant — et tous les suivants — marchait. Sans recharger la page entre les deux.
+
+C'est **le défaut n° 2 du tableau ci-dessus**, au même endroit du fichier : le bouton « − » était le
+seul gestionnaire de cette fonctionnalité à être resté posé sur un élément, donc en phase de
+**bouillonnement**.
+
+Trois pistes étaient plausibles ; deux sont écartées par le code lui-même, la troisième se
+reproduit en test :
+
+| Piste | Verdict |
+| --- | --- |
+| Gestionnaire attaché deux fois | Impossible : `cfAddUnfile()` sort si `bar.querySelector('.cf-unfile')` existe, et un gestionnaire en double ferait le retrait **deux** fois (idempotent), pas zéro |
+| Course entre l'insertion du bouton et l'attachement de son gestionnaire | Impossible : le gestionnaire était posé **avant** l'insertion, dans la même fonction synchrone |
+| Clic absorbé par un gestionnaire de **capture** posé plus haut | **C'est ça** — seule piste qui reproduit le symptôme, « premier clic seulement » compris |
+
+Le mécanisme : une capture descend depuis `window`, elle passe donc **avant** la cible. Il suffit
+qu'un gestionnaire du site posé en capture sur un ancêtre appelle `stopPropagation()` pour que le
+clic n'atteigne jamais le bouton. Et une bibliothèque de glissement arme couramment un « avaleur de
+clic » **à usage unique** en fin de geste, pour que le clic qui suit un glissement ne déclenche
+rien : une fois consommé, tout redevient normal — d'où le premier clic, et lui seul. Notre propre
+repli pointeur y contribue, puisqu'il prive le site de son `pointerup` et lui envoie un Échap pour
+qu'il annule : c'est très exactement une fin de geste.
+
+**Correction** : la même que pour le dépôt. Interception sur **`window` en capture**, par
+délégation sur `.cf-unfile`, et plus **aucun** gestionnaire sur le bouton. Le content script
+s'inscrit au chargement de la page, donc avant tout avaleur armé plus tard par un geste. L'uuid est
+relu dans le `href` du lien de la ligne au moment du clic au lieu d'être gardé dans une fermeture :
+il n'y a plus de fermeture, et la délégation règle au passage le cycle de vie du bouton, détruit et
+recréé à chaque re-rendu de la sidebar.
+
+Le test *un avaleur de clic du site ne peut plus manger le retrait* rejoue la scène : un avaleur en
+capture sur le document, un **témoin** (le repli d'un dossier, lui géré sur l'élément) qui prouve
+que l'avaleur mange bel et bien les clics, puis le clic sur « − » qui doit passer quand même.
+Vérifié **rouge avant, vert après** — sans ça, la correction ne serait qu'une hypothèse.
+
+⚠️ Ce qui reste non observé : *quel* gestionnaire du site arme l'avaleur. Le test prouve la classe
+de causes et l'immunité, pas l'identité du coupable — et la correction ne dépend ni de l'une ni de
+l'autre.
+
 #### Tests
 
 Toute la logique de rangement — parsing d'uuid, création, assignation, suppression — est dans
@@ -789,6 +972,28 @@ Le dépôt y est couvert par un **espion** qui rejoue le gestionnaire du site : 
 ancêtre de nos blocs, dans les **deux** phases. Les tests vérifient qu'il n'est jamais appelé
 quand on dépose sur un dossier, et qu'il l'est bel et bien — liste d'appels exacte à l'appui —
 quand on dépose ailleurs. Son silence est donc une garantie, pas un faux négatif.
+
+Le bouton « − » y est verrouillé par un test qui rejoue **les deux** retraits de bout en bout —
+dépôt sur la bande d'un côté, clic de l'autre — et compare l'état complet, DOM *et* storage : la
+seule façon de garantir qu'il n'existe pas une seconde implémentation de la désassignation. Un
+second test le protège de l'« avaleur de clic » du site (voir [Le premier clic qui ne faisait
+rien](#le-premier-clic-qui-ne-faisait-rien)).
+
+Les modales sont coupées en deux de la même façon. Ce qu'elles **décident** est pur et testé par
+`node test-folders.js` : un nom soumettable est exactement un nom que `folderRename()` *et*
+`folderCreate()` écriraient — l'équivalence est vérifiée dans les deux sens plutôt qu'affirmée —
+puis Échap annule / Entrée valide, et le texte de la confirmation (accord, dossier vide, réassurance
+toujours présente).
+
+Ce qu'elles **affichent** est dans `test-folders-dom.js` : champ pré-rempli, focalisé et
+présélectionné au renommage, vide et bouton « Créer » grisé à la création ; Entrée et le bouton
+d'action produisent le même résultat ; Échap, « Annuler » et le clic sur le fond n'écrivent rien
+— un clic *dans* la boîte, lui, ne ferme pas ; la confirmation n'a pas de champ, son bouton porte
+la couleur d'alerte et le focus est sur « Annuler » ; ni `window.prompt` ni `window.confirm` ne
+sont plus appelés ; aucune frappe n'atteint le document.
+
+Quatre garde-fous ont été vérifiés **rouges avant, verts après** : nom vide, frappes retenues,
+clic sur le fond limité à sa cible, et focus sur « Annuler ».
 
 ⚠️ Une limite de jsdom à connaître : il **n'applique pas** la règle du navigateur selon laquelle
 un `drop` n'est émis que si le `dragover` correspondant a été neutralisé. Les tests vérifient

@@ -36,13 +36,29 @@ var UUIDS = [
 
 // Structure CONFIRMEE par inspection reelle, reproduite a l'identique : c'est tout l'interet du
 // test. Si claude.ai la change, c'est ici ET dans folders.js qu'il faut repercuter.
+//
+// Le conteneur de controles est reproduit avec ses classes reelles : cache au repos
+// (opacity-0 pointer-events-none), revele par les variants group-hover:/group-focus-within:
+// portes par le parent .group. C'est la que le bouton « − » doit se poser — s'y installer est
+// tout ce qui lui donne la meme apparition au survol que le « … » natif.
+function itemHtml(u, label) {
+  return '<div class="relative df-drag-shiftable">' +
+           '<div class="group relative rounded-[var(--df-radius-pill)]">' +
+             '<a href="/chat/' + u + '" class="w-full">' + label + '</a>' +
+             '<div class="absolute right-[6px] top-1/2 -translate-y-1/2 flex items-center gap-0.5 ' +
+                  'opacity-0 pointer-events-none group-hover:opacity-100 ' +
+                  'group-hover:pointer-events-auto group-focus-within:opacity-100 ' +
+                  'group-focus-within:pointer-events-auto">' +
+               '<button aria-label="Plus d\'options pour ' + label + '"></button>' +
+               '<div class="cds-root text-primary contents"></div>' +
+             '</div>' +
+           '</div>' +
+         '</div>';
+}
+
 function sidebarHtml(uuids, withScroll) {
   var items = uuids.map(function (u, i) {
-    return '<div class="relative df-drag-shiftable">' +
-             '<div class="group relative rounded-[var(--df-radius-pill)]">' +
-               '<a href="/chat/' + u + '">Conversation ' + i + '</a>' +
-             '</div>' +
-           '</div>';
+    return itemHtml(u, 'Conversation ' + i);
   }).join('');
 
   var sections = '<div class="dframe-recents-by-mode contents">' +
@@ -273,13 +289,13 @@ test('re-rendu de la SPA : le rangement se reapplique tout seul', function () {
       var scroll = w.doc.querySelector('.dframe-nav-scroll');
       scroll.innerHTML = '<div class="dframe-recents-by-mode contents">' +
         '<div class="group/section flex flex-col gap-px">' +
-        UUIDS.map(function (u, i) {
-          return '<div class="relative df-drag-shiftable"><div><a href="/chat/' + u + '">C' + i + '</a></div></div>';
-        }).join('') + '</div></div>';
+        UUIDS.map(function (u, i) { return itemHtml(u, 'C' + i); }).join('') + '</div></div>';
       return w.settle(200);   // debounce du MutationObserver
     })
     .then(function () {
       assert.strictEqual(layout(w.doc), '[T]   0 1 2', 'rangement non reapplique apres re-rendu');
+      // Le re-rendu a detruit le bouton avec l'ancien item : il doit revenir avec le rangement.
+      assert.strictEqual(w.doc.querySelectorAll('.cf-unfile').length, 1, 'bouton « − » non remis');
     });
 });
 
@@ -297,11 +313,8 @@ test('conversation arrivee au scroll (pagination) : rangee sans rechargement', f
     .then(w.settle)
     .then(function () {
       var section = w.doc.querySelector('.group\\/section');
-      var div = w.doc.createElement('div');
-      div.className = 'relative df-drag-shiftable';
-      div.innerHTML = '<div><a href="/chat/' + vieux + '">Vieille conversation</a></div>';
-      section.appendChild(div);
-      w.doc.__nouveau = div;
+      section.insertAdjacentHTML('beforeend', itemHtml(vieux, 'Vieille conversation'));
+      w.doc.__nouveau = section.lastElementChild;
       return w.settle(200);
     })
     .then(function () {
@@ -446,6 +459,481 @@ test('sortie par la bande : désassignée, sans que le site soit sollicité', fu
     })
     .then(function () {
       assert.strictEqual(layout(w.doc), '[Travail] 0 1 2', 'conversation non sortie du dossier');
+    });
+});
+
+// ---- bouton « − » --------------------------------------------------------------------------------
+
+// L'exigence n'est pas seulement « un bouton existe » : c'est qu'il vive dans le conteneur de
+// controles NATIF, seul endroit ou il herite du survol sans qu'on gere une opacite.
+test('bouton « − » : uniquement sur les items rangés, dans le conteneur de contrôles natif', function () {
+  var w = boot();
+  return withFolder(w)
+    .then(function () { return w.set({ folderAssignments: assign({ 1: 'f1' }) }); })
+    .then(w.settle)
+    .then(function () {
+      var btns = w.doc.querySelectorAll('.cf-unfile');
+      assert.strictEqual(btns.length, 1, 'un bouton, et seulement sur la conversation rangée');
+      assert.ok(btns[0].closest('.cf-body'), 'le bouton n\'est pas sur l\'item rangé');
+
+      var bar = btns[0].parentElement;
+      assert.ok(bar.querySelector('button[aria-label^="Plus d\'options"]'),
+        'le bouton doit partager le conteneur du « … » natif, sinon il ne suit pas le survol');
+      assert.ok(bar.className.indexOf('group-hover:opacity-100') !== -1,
+        'conteneur sans variant group-hover: : le bouton serait visible en permanence');
+      assert.strictEqual(btns[0].getAttribute('aria-label'),
+        'Retirer « Conversation 1 » du dossier');
+    });
+});
+
+// Le point de la demande : une seule logique de retrait, deux entrees. On rejoue les deux
+// scenarios de bout en bout et on compare l'etat complet — DOM et storage.
+test('bouton « − » : retrait identique au dépôt sur la bande « Retirer »', function () {
+  function etat(w) {
+    return w.win.chrome.storage.local.get().then(function (store) {
+      return layout(w.doc) + ' | ' + JSON.stringify(store.folderAssignments || {});
+    });
+  }
+
+  function range(w) {
+    return withFolder(w)
+      .then(function () { return w.set({ folderAssignments: assign({ 1: 'f1' }) }); })
+      .then(w.settle)
+      .then(function () {
+        assert.strictEqual(layout(w.doc), '[Travail]   1 0 2');
+        return w;
+      });
+  }
+
+  var parBande = boot();
+  var parBouton = boot();
+  var natif = [];
+
+  return range(parBande)
+    .then(function (w) {
+      var data = fakeDataTransfer();
+      var out = w.doc.querySelector('.cf-out');
+      fireDrag(w, w.doc.querySelector('.cf-body a'), 'dragstart', data);
+      fireDrag(w, out, 'dragover', data);
+      fireDrag(w, out, 'drop', data);
+      return w.settle();
+    })
+    .then(function () { return range(parBouton); })
+    .then(function (w) {
+      // Un gestionnaire du site sur un ancetre, en bouillonnement : c'est ce que le
+      // stopPropagation() du bouton doit arreter. (En capture, rien ne peut l'arreter : la
+      // capture descend depuis window, et le site n'a de toute facon pas de clic de ligne en
+      // capture — sinon le « … » natif d'a cote naviguerait lui aussi.)
+      w.doc.querySelector('.dframe-nav-scroll')
+        .addEventListener('click', function () { natif.push('bubble:click'); }, false);
+
+      var ev = new w.win.Event('click', { bubbles: true, cancelable: true });
+      w.doc.querySelector('.cf-body .cf-unfile').dispatchEvent(ev);
+      assert.ok(ev.defaultPrevented, 'le clic doit être neutralisé : sinon il remonte à la ligne');
+      return w.settle();
+    })
+    .then(function () {
+      assert.strictEqual(natif.join(','), '', 'le clic est remonté jusqu\'à un ancêtre du site');
+      return Promise.all([etat(parBande), etat(parBouton)]);
+    })
+    .then(function (deux) {
+      assert.strictEqual(deux[1], deux[0], 'le bouton ne produit pas le même résultat que la bande');
+      assert.strictEqual(deux[1], '[Travail] 0 1 2 | {}', 'conversation non sortie du dossier');
+      assert.strictEqual(parBouton.doc.querySelectorAll('.cf-unfile').length, 0,
+        'le bouton est reparti dans « Récents » avec l\'item');
+    });
+});
+
+// LE BUG remonte en usage reel : le PREMIER clic sur « − » ne faisait rien, le suivant — et tous
+// les suivants — marchait, sans rechargement de la page. Cause : le gestionnaire etait pose sur le
+// bouton, donc en phase de BOUILLONNEMENT. Une bibliotheque de glissement arme couramment un
+// « avaleur de clic » a usage unique en fin de geste, pour que le clic qui suit un glissement ne
+// declenche rien ; pose en CAPTURE sur un ancetre, il stoppe la propagation AVANT que l'evenement
+// n'atteigne le bouton. Une fois l'avaleur consomme, tout redevient normal — d'ou « le premier clic
+// seulement ». Exactement le defaut n° 2 du tableau du depot, au meme endroit du fichier.
+test('bouton « − » : un avaleur de clic du site ne peut plus manger le retrait', function () {
+  var w = boot();
+  var avale = 0;
+
+  function clic(sel) {
+    w.doc.querySelector(sel).dispatchEvent(
+      new w.win.Event('click', { bubbles: true, cancelable: true }));
+    return w.settle();
+  }
+
+  return withFolder(w)
+    .then(function () { return w.set({ folderAssignments: assign({ 1: 'f1' }) }); })
+    .then(w.settle)
+    .then(function () {
+      assert.strictEqual(layout(w.doc), '[Travail]   1 0 2');
+      w.doc.addEventListener('click', function (e) { avale++; e.stopPropagation(); }, true);
+
+      // Témoin : le repli d'un dossier, lui, est bien géré sur l'élément (bouillonnement). Il
+      // prouve que l'avaleur est réellement en position de manger un clic — sans ce témoin, le
+      // test passerait aussi avec un avaleur inoffensif, et ne garantirait rien.
+      return clic('.cf-head');
+    })
+    .then(function () {
+      assert.strictEqual(avale, 1, 'l\'avaleur n\'a pas joué : le test ne prouverait rien');
+      assert.strictEqual(w.doc.querySelector('[data-cf-folder]').className, '',
+        'l\'avaleur laisse passer les clics : il ne prouve rien');
+
+      return clic('.cf-body .cf-unfile');
+    })
+    .then(function () {
+      assert.strictEqual(avale, 1, 'le clic est descendu jusqu\'à l\'avaleur au lieu d\'être pris');
+      assert.strictEqual(layout(w.doc), '[Travail] 0 1 2',
+        'le clic a été mangé avant d\'atteindre le retrait');
+    });
+});
+
+// ---- menu contextuel et modale de renommage ------------------------------------------------------
+//
+// Les deux composants qui copient un composant natif de claude.ai (menu « … » d'une conversation,
+// modale de renommage d'une conversation). Ce qu'ils DECIDENT est teste dans test-folders.js ; ce
+// qui suit verifie ce qu'ils AFFICHENT et ce qu'ils ecrivent.
+
+function ouvreMenu(w) {
+  var ev = new w.win.Event('contextmenu', { bubbles: true, cancelable: true });
+  ev.clientX = 40;
+  ev.clientY = 60;
+  w.doc.querySelector('.cf-head').dispatchEvent(ev);
+  return w.doc.querySelector('.cf-menu');
+}
+
+function clique(w, el) {
+  el.dispatchEvent(new w.win.Event('click', { bubbles: true, cancelable: true }));
+}
+
+function touche(w, el, key) {
+  var ev = new w.win.KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true });
+  el.dispatchEvent(ev);
+  return ev;
+}
+
+// Aucune des trois commandes ne doit plus passer par un composant du navigateur : les compteurs
+// restent a zero pour toute la duree du test.
+function espionneNatif(w) {
+  var natif = { prompt: 0, confirm: 0 };
+  w.win.prompt = function () { natif.prompt++; return 'par le prompt natif'; };
+  w.win.confirm = function () { natif.confirm++; return true; };
+  return natif;
+}
+
+function modaleOuverte(w, natif) {
+  var modal = w.doc.querySelector('.cf-modal');
+  assert.ok(modal, 'aucune modale ouverte');
+  assert.strictEqual(natif.prompt + natif.confirm, 0,
+    'un composant du navigateur a été appelé : c\'est ce qu\'on remplace');
+
+  return {
+    modal: modal,
+    input: modal.querySelector('.cf-modal-input'),
+    message: modal.querySelector('.cf-modal-message'),
+    annuler: modal.querySelectorAll('.cf-modal-btn')[0],
+    action: modal.querySelectorAll('.cf-modal-btn')[1]
+  };
+}
+
+// Ouvre le menu puis la modale de renommage.
+function ouvreRenommage(w) {
+  var natif = espionneNatif(w);
+  clique(w, ouvreMenu(w).querySelectorAll('.cf-item')[0]);
+
+  var d = modaleOuverte(w, natif);
+  assert.strictEqual(w.doc.querySelector('.cf-menu'), null, 'le menu doit se fermer derrière');
+  d.enregistrer = d.action;
+  return d;
+}
+
+function ouvreCreation(w) {
+  var natif = espionneNatif(w);
+  clique(w, w.doc.querySelector('.cf-btn'));
+  return modaleOuverte(w, natif);
+}
+
+function ouvreSuppression(w) {
+  var natif = espionneNatif(w);
+  clique(w, ouvreMenu(w).querySelectorAll('.cf-item')[1]);
+  return modaleOuverte(w, natif);
+}
+
+test('menu contextuel : conteneur et items à la structure du menu natif', function () {
+  var w = boot();
+  return withFolder(w).then(function () {
+    var menu = ouvreMenu(w);
+    assert.ok(menu, 'menu non ouvert');
+    assert.strictEqual(menu.getAttribute('role'), 'menu');
+
+    var items = menu.querySelectorAll('.cf-item');
+    assert.strictEqual(items.length, 2, 'renommer + supprimer');
+    items.forEach(function (it) {
+      assert.strictEqual(it.getAttribute('role'), 'menuitem');
+      // Icone au trait de l'extension, pas la police de ligatures du site.
+      assert.ok(it.querySelector('svg path'), 'item sans icône SVG');
+      assert.ok(it.querySelector('.cf-item-label').textContent, 'item sans libellé');
+    });
+    assert.strictEqual(menu.querySelectorAll('.cf-swatch').length, 8, 'palette absente du menu');
+  });
+});
+
+// L'invariant qui rend acceptable de DEDUIRE les noms de tokens du site depuis leurs classes
+// Tailwind : un nom mal deduit ne doit jamais laisser une couleur indefinie. Si ce test casse,
+// c'est qu'un var(--cds-…) a ete ajoute sans repli — et ce composant-la deviendra invisible le
+// jour ou le token n'existe pas.
+test('aucun token du site n\'est utilisé sans valeur de repli', function () {
+  var w = boot();
+  return w.settle().then(function () {
+    var css = w.doc.getElementById('__claude_folders_style').textContent;
+    var refs = css.match(/var\(--cds-[a-z0-9-]+[,)]/g) || [];
+
+    assert.ok(refs.length >= 8, 'les tokens du site ne sont plus lus du tout (' + refs.length + ')');
+    refs.forEach(function (r) {
+      assert.ok(r.slice(-1) === ',', 'sans repli : ' + r);
+    });
+    assert.strictEqual(css.indexOf('#1c1c1e'), -1, 'ancien menu sombre en dur toujours présent');
+  });
+});
+
+test('renommage : modale pré-remplie, focalisée, texte sélectionné', function () {
+  var w = boot();
+  return withFolder(w).then(function () {
+    var d = ouvreRenommage(w);
+
+    assert.strictEqual(d.input.value, 'Travail', 'le nom actuel doit être pré-rempli');
+    assert.strictEqual(w.doc.activeElement, d.input, 'le champ n\'a pas le focus');
+    assert.strictEqual(d.input.selectionStart, 0);
+    assert.strictEqual(d.input.selectionEnd, 'Travail'.length, 'texte non présélectionné');
+    assert.strictEqual(d.input.maxLength, w.win.FOLDER_NAME_MAX, 'longueur non bornée');
+    assert.strictEqual(d.modal.querySelector('[role="dialog"]').className, 'cf-modal-box');
+    assert.strictEqual(d.annuler.textContent, 'Annuler');
+    assert.strictEqual(d.enregistrer.textContent, 'Enregistrer');
+  });
+});
+
+test('Entrée enregistre et referme, comme le bouton « Enregistrer »', function () {
+  function renomme(w, parLaTouche) {
+    return withFolder(w).then(function () {
+      var d = ouvreRenommage(w);
+      d.input.value = '  Perso  ';
+      d.input.dispatchEvent(new w.win.Event('input', { bubbles: true }));
+
+      if (parLaTouche) {
+        assert.ok(touche(w, d.input, 'Enter').defaultPrevented, 'Entrée non consommée');
+      } else {
+        clique(w, d.enregistrer);
+      }
+      assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+      return w.settle();
+    }).then(function () {
+      // Le nom est nettoye a l'ecriture, comme par le prompt qu'on remplace.
+      return w.doc.querySelector('.cf-name').textContent;
+    });
+  }
+
+  return Promise.all([renomme(boot(), true), renomme(boot(), false)]).then(function (deux) {
+    assert.strictEqual(deux[0], 'Perso', 'Entrée n\'a pas enregistré');
+    assert.strictEqual(deux[1], deux[0], 'les deux entrées ne donnent pas le même résultat');
+  });
+});
+
+test('Échap et « Annuler » ferment sans rien écrire', function () {
+  function abandonne(w, parLaTouche) {
+    return withFolder(w).then(function () {
+      var d = ouvreRenommage(w);
+      d.input.value = 'Jamais enregistré';
+
+      if (parLaTouche) touche(w, d.input, 'Escape');
+      else clique(w, d.annuler);
+
+      assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+      return w.settle();
+    }).then(function () {
+      return w.doc.querySelector('.cf-name').textContent;
+    });
+  }
+
+  return Promise.all([abandonne(boot(), true), abandonne(boot(), false)]).then(function (deux) {
+    assert.strictEqual(deux[0], 'Travail', 'Échap a enregistré');
+    assert.strictEqual(deux[1], 'Travail', '« Annuler » a enregistré');
+  });
+});
+
+// Fermer sur un nom vide se lirait comme une sauvegarde reussie, alors que folderRename()
+// ignorerait la saisie : la modale reste donc ouverte, et le bouton le dit.
+test('nom vidé : Entrée ne ferme rien et « Enregistrer » est désactivé', function () {
+  var w = boot();
+  return withFolder(w).then(function () {
+    var d = ouvreRenommage(w);
+    assert.strictEqual(d.enregistrer.disabled, false, 'le nom actuel est pourtant valide');
+
+    d.input.value = '   ';
+    d.input.dispatchEvent(new w.win.Event('input', { bubbles: true }));
+    assert.strictEqual(d.enregistrer.disabled, true, 'bouton actif sur un nom vide');
+
+    touche(w, d.input, 'Enter');
+    assert.ok(w.doc.querySelector('.cf-modal'), 'la modale s\'est fermée sur un nom vide');
+
+    d.input.value = 'Perso';
+    d.input.dispatchEvent(new w.win.Event('input', { bubbles: true }));
+    assert.strictEqual(d.enregistrer.disabled, false, 'bouton resté désactivé');
+  });
+});
+
+// claude.ai ecoute le clavier sur le document pour ses propres raccourcis. Une frappe faite dans
+// notre champ n'a rien a y faire — sans quoi taper « / » ou « e » dans un nom de dossier
+// declencherait un raccourci du site.
+test('les frappes de la modale ne parviennent pas au site', function () {
+  var w = boot();
+  var recu = [];
+
+  return withFolder(w).then(function () {
+    w.doc.addEventListener('keydown', function (e) { recu.push(e.key); }, false);
+
+    var d = ouvreRenommage(w);
+    touche(w, d.input, 'e');
+    touche(w, d.input, '/');
+    touche(w, d.input, 'Escape');
+
+    assert.strictEqual(recu.join(','), '', 'le site a reçu les frappes : ' + recu.join(','));
+  });
+});
+
+// ---- création : la même modale de saisie ---------------------------------------------------------
+
+test('« + » : modale de création, champ vide, bouton « Créer »', function () {
+  var w = boot();
+  return w.settle().then(function () {
+    var d = ouvreCreation(w);
+
+    assert.strictEqual(d.input.value, '', 'aucun nom ne doit être pré-rempli');
+    assert.strictEqual(w.doc.activeElement, d.input, 'le champ n\'a pas le focus');
+    assert.strictEqual(d.modal.querySelector('.cf-modal-title').textContent, 'Nouveau dossier');
+    assert.strictEqual(d.annuler.textContent, 'Annuler');
+    assert.strictEqual(d.action.textContent, 'Créer');
+    // Le meme garde-fou qu'au renommage : rien a creer tant que le champ est vide.
+    assert.strictEqual(d.action.disabled, true, 'bouton actif sur un champ vide');
+
+    d.input.value = '  Travail  ';
+    d.input.dispatchEvent(new w.win.Event('input', { bubbles: true }));
+    assert.strictEqual(d.action.disabled, false);
+
+    assert.ok(touche(w, d.input, 'Enter').defaultPrevented, 'Entrée non consommée');
+    assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+    return w.settle();
+  }).then(function () {
+    assert.strictEqual(w.doc.querySelector('.cf-name').textContent, 'Travail',
+      'dossier non créé, ou nom non nettoyé');
+  });
+});
+
+test('création abandonnée (Échap, « Annuler », fond) : aucun dossier', function () {
+  var w = boot();
+
+  function abandonne(ferme) {
+    var d = ouvreCreation(w);
+    d.input.value = 'Jamais créé';
+    d.input.dispatchEvent(new w.win.Event('input', { bubbles: true }));
+    ferme(w, d);
+    assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+  }
+
+  return w.settle().then(function () {
+    abandonne(function (w, d) { touche(w, d.input, 'Escape'); });
+    abandonne(function (w, d) { clique(w, d.annuler); });
+    abandonne(function (w, d) {
+      d.modal.dispatchEvent(new w.win.Event('mousedown', { bubbles: true }));
+    });
+    return w.settle();
+  }).then(function () {
+    assert.strictEqual(w.doc.querySelectorAll('[data-cf-folder]').length, 0, 'un dossier a été créé');
+  });
+});
+
+// Le clic dans la BOITE ne doit pas fermer : c'est le piege classique du « clic sur le fond »
+// posé sans distinguer la cible de l'élément écouté.
+test('clic dans la boîte : la modale reste ouverte', function () {
+  var w = boot();
+  return w.settle().then(function () {
+    var d = ouvreCreation(w);
+    d.input.dispatchEvent(new w.win.Event('mousedown', { bubbles: true }));
+    assert.ok(w.doc.querySelector('.cf-modal'), 'un clic dans le champ a fermé la modale');
+  });
+});
+
+// ---- suppression : confirmation stylée -----------------------------------------------------------
+
+test('suppression : confirmation sans champ, bouton d\'alerte, focus sur « Annuler »', function () {
+  var w = boot();
+  return withFolder(w)
+    .then(function () { return w.set({ folderAssignments: assign({ 0: 'f1', 1: 'f1' }) }); })
+    .then(w.settle)
+    .then(function () {
+      var d = ouvreSuppression(w);
+
+      assert.strictEqual(d.input, null, 'une confirmation n\'a pas de champ de saisie');
+      assert.ok(d.message, 'message absent');
+      assert.strictEqual(d.modal.querySelector('.cf-modal-title').textContent,
+        'Supprimer le dossier « Travail » ?');
+      assert.strictEqual(d.message.textContent, w.win.folderDeleteMessage(2),
+        'le message ne vient pas de folders-source.js');
+
+      assert.strictEqual(d.annuler.textContent, 'Annuler');
+      assert.strictEqual(d.action.textContent, 'Supprimer');
+      assert.ok(d.action.className.indexOf('cf-modal-btn-danger') !== -1,
+        'le bouton destructeur doit porter la couleur d\'alerte, pas le primaire foncé');
+      assert.strictEqual(d.action.className.indexOf('cf-modal-btn-primary'), -1);
+
+      // Rien a valider : aucun des deux boutons n'est grise, jamais.
+      assert.strictEqual(d.annuler.disabled, false);
+      assert.strictEqual(d.action.disabled, false);
+
+      // Le focus est sur « Annuler » : Entree referme au lieu de detruire, contrairement a
+      // window.confirm dont la touche Entree valide.
+      assert.strictEqual(w.doc.activeElement, d.annuler,
+        'le focus doit être sur « Annuler », pas sur le bouton destructeur');
+    });
+});
+
+test('suppression confirmée : dossier supprimé, conversations libérées', function () {
+  var w = boot();
+  return withFolder(w)
+    .then(function () { return w.set({ folderAssignments: assign({ 0: 'f1', 2: 'f1' }) }); })
+    .then(w.settle)
+    .then(function () {
+      assert.strictEqual(layout(w.doc), '[Travail]   0   2 1');
+      clique(w, ouvreSuppression(w).action);
+      assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+      return w.settle();
+    })
+    .then(function () {
+      assert.strictEqual(w.doc.querySelectorAll('[data-cf-folder]').length, 0, 'dossier non supprimé');
+      assert.strictEqual(layout(w.doc), '0 1 2', 'une conversation a été perdue avec le dossier');
+    });
+});
+
+test('suppression abandonnée (Échap, « Annuler », fond) : rien n\'est touché', function () {
+  var w = boot();
+
+  function abandonne(ferme) {
+    var d = ouvreSuppression(w);
+    ferme(w, d);
+    assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+  }
+
+  return withFolder(w)
+    .then(function () { return w.set({ folderAssignments: assign({ 1: 'f1' }) }); })
+    .then(w.settle)
+    .then(function () {
+      abandonne(function (w, d) { touche(w, d.annuler, 'Escape'); });
+      abandonne(function (w, d) { clique(w, d.annuler); });
+      abandonne(function (w, d) {
+        d.modal.dispatchEvent(new w.win.Event('mousedown', { bubbles: true }));
+      });
+      return w.settle();
+    })
+    .then(function () {
+      assert.strictEqual(layout(w.doc), '[Travail]   1 0 2', 'le dossier ou son contenu a bougé');
     });
 });
 

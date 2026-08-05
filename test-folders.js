@@ -212,6 +212,27 @@ test('assignation sans uuid ou sans dossier : ignoree', function () {
   assert.strictEqual(pairs(sandbox.folderAssign({}, UUID_A, null)), '');
 });
 
+// ---- retrait : bande « Retirer » et bouton « − » -----------------------------------------------
+//
+// Les deux entrees passent par le MEME cfApplyDrop('', uuid), donc par folderUnassign : ce qui
+// suit verrouille les proprietes dont depend cette mise en commun. Le fait que le bouton appelle
+// bien cette fonction-la, et pas une copie, se verifie dans test-folders-dom.js.
+
+test('retrait : le resultat ne depend pas du dossier d origine', function () {
+  var deF1 = sandbox.folderUnassign(sandbox.folderAssign({}, UUID_A, 'f1'), UUID_A);
+  var deF2 = sandbox.folderUnassign(sandbox.folderAssign({}, UUID_A, 'f2'), UUID_A);
+  assert.strictEqual(pairs(deF1), '');
+  assert.strictEqual(pairs(deF2), '');
+});
+
+// Le bouton peut etre clique deux fois avant que le premier storage.onChanged ne soit revenu.
+test('retrait : deux fois de suite = une fois (double clic)', function () {
+  var m = sandbox.folderAssign(sandbox.folderAssign({}, UUID_A, 'f1'), UUID_B, 'f1');
+  var une = sandbox.folderUnassign(m, UUID_A);
+  assert.strictEqual(pairs(sandbox.folderUnassign(une, UUID_A)), pairs(une));
+  assert.strictEqual(pairs(une), UUID_B + '=f1');   // la voisine n'a pas bouge
+});
+
 test('comptage par dossier', function () {
   var m = sandbox.folderAssign(sandbox.folderAssign({}, UUID_A, 'f1'), UUID_B, 'f1');
   assert.strictEqual(sandbox.folderCount(m, 'f1'), 2);
@@ -255,6 +276,81 @@ test('suppression d un dossier vide : aucune assignation touchee', function () {
 
   var out = sandbox.folderDelete(folders, m, 'f2');
   assert.strictEqual(pairs(out.assignments), UUID_A + '=f1');
+});
+
+// ---- modale de renommage -----------------------------------------------------------------------
+//
+// Les deux seules decisions de la modale qui ne dependent pas du DOM. Ce qu'elle AFFICHE se
+// verifie dans test-folders-dom.js ; ce qu'elle DECIDE se verifie ici.
+
+test('nom soumettable : ce qui survit au nettoyage, et rien d autre', function () {
+  assert.strictEqual(sandbox.folderNameSubmittable('Travail'), true);
+  assert.strictEqual(sandbox.folderNameSubmittable('  Travail  '), true);
+  assert.strictEqual(sandbox.folderNameSubmittable('x'.repeat(60)), true);   // coupe, pas refuse
+  assert.strictEqual(sandbox.folderNameSubmittable(''), false);
+  assert.strictEqual(sandbox.folderNameSubmittable('   '), false);
+  assert.strictEqual(sandbox.folderNameSubmittable('\n\t '), false);
+  assert.strictEqual(sandbox.folderNameSubmittable(null), false);
+  assert.strictEqual(sandbox.folderNameSubmittable(undefined), false);
+});
+
+// L'invariant qui justifie la fonction : refuser exactement ce que folderRename() ignorerait.
+// Si les deux divergeaient, la modale se fermerait sur un nom que personne n'ecrirait — ce qui
+// se lit comme une sauvegarde reussie.
+test('nom soumettable ⇔ renommage effectif', function () {
+  var a = sandbox.folderCreate([], 'Avant');
+  ['Après', '  Après  ', '', '   ', null].forEach(function (saisi) {
+    var change = sandbox.folderRename(a, 'f1', saisi)[0].name !== 'Avant';
+    assert.strictEqual(sandbox.folderNameSubmittable(saisi), change, JSON.stringify(saisi));
+  });
+});
+
+// Le meme invariant du cote creation : les deux modales de saisie partagent ce garde-fou, il
+// doit donc coller aux DEUX ecritures. Un « Créer » actif sur un nom que folderCreate() jette
+// fermerait la modale sans qu'aucun dossier n'apparaisse.
+test('nom soumettable ⇔ création effective', function () {
+  ['Travail', '  Travail  ', 'x'.repeat(60), '', '   ', '\n\t ', null, undefined]
+    .forEach(function (saisi) {
+      var cree = sandbox.folderCreate([], saisi).length === 1;
+      assert.strictEqual(sandbox.folderNameSubmittable(saisi), cree, JSON.stringify(saisi));
+    });
+});
+
+// ---- confirmation de suppression ---------------------------------------------------------------
+//
+// La confirmation n'a pas de champ, donc rien a valider : son bouton d'action n'est jamais grise
+// et le seul garde-fou est le geste demande (verifie dans test-folders-dom.js, avec le focus sur
+// « Annuler »). Ce qui est verifiable ici, c'est son texte — la seule partie qui peut etre fausse.
+
+test('message de suppression : accord selon le nombre de conversations', function () {
+  assert.ok(/^Ce dossier est vide\./.test(sandbox.folderDeleteMessage(0)));
+  assert.ok(/^La conversation qu'il contient retournera /.test(sandbox.folderDeleteMessage(1)));
+  assert.ok(/^Les 3 conversations qu'il contient retourneront /.test(sandbox.folderDeleteMessage(3)));
+});
+
+// La phrase qui repond a « est-ce que ca supprime mes conversations ? ». Elle ne doit disparaitre
+// dans aucun des trois cas — c'est la seule raison d'etre de cette confirmation.
+test('message de suppression : la réassurance est toujours présente', function () {
+  [0, 1, 2, 50].forEach(function (n) {
+    assert.ok(sandbox.folderDeleteMessage(n).indexOf('Aucune conversation ne sera supprimée.') !== -1,
+      'n=' + n);
+  });
+});
+
+test('message de suppression : un compte aberrant est traité comme zéro', function () {
+  var vide = sandbox.folderDeleteMessage(0);
+  [undefined, null, NaN, 'trois', -1].forEach(function (n) {
+    assert.strictEqual(sandbox.folderDeleteMessage(n), vide, JSON.stringify(n));
+  });
+});
+
+test('touches : Échap annule, Entrée valide, le reste est laissé au navigateur', function () {
+  assert.strictEqual(sandbox.folderDialogKeyAction('Escape'), 'cancel');
+  assert.strictEqual(sandbox.folderDialogKeyAction('Enter'), 'submit');
+  ['a', 'Tab', 'ArrowDown', 'Backspace', 'Esc', 'enter', '', null, undefined]
+    .forEach(function (k) {
+      assert.strictEqual(sandbox.folderDialogKeyAction(k), null, JSON.stringify(k));
+    });
 });
 
 // ---- palette ---------------------------------------------------------------------------------

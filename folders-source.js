@@ -53,6 +53,50 @@ function folderCleanColor(raw) {
   return FOLDER_COLORS.indexOf(raw) === -1 ? FOLDER_COLORS[0] : raw;
 }
 
+// ---- modales -----------------------------------------------------------------
+//
+// Les seules decisions des modales (saisie et confirmation) qui ne dependent pas du DOM. Elles
+// vivent ici comme tout ce qui est verifiable ; folders.js n'en garde que l'affichage.
+
+// Un nom qui ne survit pas au nettoyage est refuse. C'est la MEME condition pour la touche
+// Entree et pour le bouton d'action, a la creation comme au renommage : si l'un des trois
+// fermait la modale sans rien ecrire, ca se lirait comme une sauvegarde reussie.
+function folderNameSubmittable(raw) {
+  return folderCleanName(raw) !== '';
+}
+
+// Le corps de la confirmation de suppression. Ici et pas dans folders.js pour la meme raison que
+// le reste : c'est du texte qui depend d'un compte, donc quelque chose qui peut etre faux, donc
+// quelque chose qui se teste.
+//
+// La derniere phrase est constante et volontaire : « est-ce que ca supprime mes conversations ? »
+// est LA question qu'on se pose devant un bouton « Supprimer », et une confirmation qui n'y
+// repond pas oblige a aller chercher ailleurs.
+function folderDeleteMessage(count) {
+  // « n > 0 » plutot que « || 0 » : ca ramene aussi un compte negatif ou illisible au cas vide,
+  // qui est le seul texte qui reste vrai quoi qu'il arrive.
+  var n = Number(count);
+  if (!(n > 0)) n = 0;
+
+  var sort = n === 0
+    ? 'Ce dossier est vide.'
+    : n === 1
+      ? 'La conversation qu\'il contient retournera dans « Récents ».'
+      : 'Les ' + n + ' conversations qu\'il contient retourneront dans « Récents ».';
+
+  return sort + ' Aucune conversation ne sera supprimée.';
+}
+
+// Ce qu'une touche vaut dans la modale. On n'en intercepte que deux ; tout le reste (saisie,
+// Tab, fleches) est laisse au navigateur. Entree valide parce qu'un champ texte d'une seule
+// ligne n'a rien d'autre a faire de cette touche — la modale native de claude.ai exige un clic,
+// ce qui se defend pour un formulaire et pas pour un nom de dossier.
+function folderDialogKeyAction(key) {
+  if (key === 'Escape') return 'cancel';
+  if (key === 'Enter') return 'submit';
+  return null;
+}
+
 // Une entree sans id ou sans nom exploitable est JETEE, pas reparee : un dossier fantome sans
 // nom serait impossible a viser pour le supprimer.
 function folderList(stored) {

@@ -46,6 +46,7 @@ var cfTarget = null;        // noeud actuellement observe, pour ne pas se reabon
 var cfTimer = null;
 var cfDragging = null;      // uuid en cours de glissement : dataTransfer.getData() est illisible
 var cfMenuEl = null;        // pendant dragover, seuls les types le sont
+var cfDialogEl = null;      // modale de renommage ouverte, ou null
 var cfEverFound = false;
 var cfWarned = {};
 
@@ -94,10 +95,22 @@ function cfStyle() {
 
   var css = [
     '#' + CF_ROOT_ID + '{display:flex;flex-direction:column;gap:2px;margin-bottom:6px}',
-    '.cf-bar{display:flex;align-items:center;gap:6px;padding:2px 8px;font-size:11px;opacity:.6}',
+    // Le bandeau ne porte plus de padding vertical : c'est la hauteur du bouton (24 px, celle du
+    // « … » natif) qui donne desormais celle de la bande, sinon les deux s'additionnaient.
+    '.cf-bar{display:flex;align-items:center;gap:6px;padding:0 8px;font-size:11px;opacity:.6}',
     '.cf-bar-label{flex:1;text-transform:uppercase;letter-spacing:.04em}',
-    '.cf-btn{all:unset;cursor:pointer;padding:0 5px;border-radius:4px;line-height:1.4}',
+    // « all:unset » remet display a inline et efface la taille de police : les deux sont donc
+    // reposees APRES, sinon le carre de 24 px n'existe pas et le « + » reste a 11 px.
+    '.cf-btn{all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;' +
+      'min-width:24px;min-height:24px;flex:none;border-radius:6px;cursor:pointer;' +
+      'font-size:15px;line-height:1}',
     '.cf-btn:hover{background:rgba(128,128,128,.22)}',
+    // Meme gabarit que le « … » natif d'a cote, dont il partage le conteneur. Aucune regle
+    // d'opacite ici : elle vient des variants group-hover:/group-focus-within: du site.
+    '.cf-unfile{all:unset;box-sizing:border-box;display:flex;align-items:center;' +
+      'justify-content:center;width:var(--df-row-ctl,24px);height:var(--df-row-ctl,24px);' +
+      'flex:none;border-radius:6px;cursor:pointer;font-size:15px;line-height:1}',
+    '.cf-unfile:hover{background:rgba(128,128,128,.22)}',
     '.cf-head{display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:8px;' +
       'cursor:pointer;font-size:13px;user-select:none}',
     '.cf-head:hover{background:rgba(128,128,128,.16)}',
@@ -108,19 +121,127 @@ function cfStyle() {
     '.cf-count{font-size:11px;opacity:.55;font-variant-numeric:tabular-nums}',
     '.cf-body{display:flex;flex-direction:column;gap:1px;padding-left:10px}',
     '.cf-body[hidden]{display:none}',
+    // Le conteneur de controles est en position:absolute : il ne POUSSE rien. La seule chose qui
+    // empeche le titre de courir dessous est la place que le lien lui reserve a droite — et le
+    // site la dimensionne pour le SEUL bouton « … ». Notre « − » elargit le conteneur sans que
+    // cette reserve suive : d'ou le titre qui passe sous les deux boutons, dans les dossiers et
+    // nulle part ailleurs (« Recents » n'a rien de plus a loger, et s'affiche bien).
+    //
+    // On rend donc la reserve pour DEUX controles, et seulement dans nos blocs. La troncature est
+    // reposee ici meme si le lien la porte deja : elle est sans effet dans ce cas, mais si le site
+    // masque le debordement par un degrade plutot que par des points de suspension, ce degrade ne
+    // couvre plus la bonne zone une fois le conteneur elargi.
+    //
+    // Volontairement large plutot que juste : trop de reserve tronque le titre un peu tot, ce qui
+    // ne se voit pas ; pas assez le remet sous les boutons, ce qui est le bug. Une seule valeur a
+    // ajuster si le gabarit des controles change.
+    '.cf-body a[href^="/chat/"]{box-sizing:border-box;min-width:0;overflow:hidden;' +
+      'text-overflow:ellipsis;white-space:nowrap;' +
+      'padding-right:calc(2 * var(--df-row-ctl,24px) + 12px)}',
     '.cf-over{outline:2px dashed currentColor;outline-offset:-2px;border-radius:8px}',
     '.cf-out{padding:5px 8px;margin-top:2px;border:1px dashed rgba(128,128,128,.5);',
       'border-radius:8px;font-size:11px;opacity:.75;text-align:center}',
     '.cf-out[hidden]{display:none}',
-    '.cf-menu{position:fixed;z-index:2147483647;min-width:150px;padding:4px;border-radius:8px;' +
-      'background:#1c1c1e;color:#f5f5f4;box-shadow:0 6px 24px rgba(0,0,0,.35);' +
-      'font:12px/1.5 system-ui,sans-serif}',
-    '.cf-menu button{all:unset;display:block;box-sizing:border-box;width:100%;padding:5px 8px;' +
-      'border-radius:5px;cursor:pointer}',
-    '.cf-menu button:hover{background:rgba(255,255,255,.12)}',
-    '.cf-swatches{display:flex;gap:4px;padding:5px 8px}',
-    '.cf-swatch{width:14px;height:14px;border-radius:999px;cursor:pointer;' +
-      'border:1px solid rgba(255,255,255,.25)}'
+
+    // ---- menu contextuel et modale de renommage ----------------------------------
+    //
+    // Ces deux-la ne sont pas peints en couleurs relatives comme le reste du fichier : ils
+    // COPIENT deux composants natifs precis (le menu « … » d'une conversation, la modale de
+    // renommage d'une conversation), et un composant flottant qui ne ressemble a rien de ce qui
+    // l'entoure se voit immediatement.
+    //
+    // Chaque valeur passe donc par un token du design system du site AVEC un repli en dur :
+    // var(--cds-x, <valeur observee>). Les noms de tokens sont deduits de leurs classes Tailwind
+    // (bg-surface-3 -> --cds-surface-3) sur le modele de la seule chaine confirmee par
+    // inspection, bg-fill-brand -> --cds-fill-brand. Deduits, donc faillibles — mais un nom
+    // errone ne casse rien : la valeur observee prend le relais. C'est ce qui rend cette
+    // deduction acceptable ici alors qu'elle ne le serait pas pour theme.js, qui lui ECRIT ces
+    // variables (voir le README : « ne pas ajouter de variable au hasard »).
+    //
+    // Volontairement PAS --cds-radius ni --cds-shadow-{sm,md,lg}, les seuls tokens que le depot
+    // connaisse deja : ce sont ceux de BASE, et rien ne confirme qu'ils valent le rounded-card /
+    // shadow-panel observes sur ces deux composants-la. Les prendre pour equivalents ferait
+    // diverger notre modale de la modale native qu'elle copie — soit exactement le defaut qu'on
+    // corrige. Ils sont en plus deja multiplies par theme.js pour le reglage « coins/ombres ».
+    '.cf-menu,.cf-modal{' +
+      '--cf-surface:var(--cds-surface-3,#fff);' +
+      '--cf-text:var(--cds-text-primary,#0b0b0b);' +
+      '--cf-hover:var(--cds-fill-ghost-hover,rgba(0,0,0,.06));' +
+      '--cf-field:var(--cds-fill-field,rgba(0,0,0,.03));' +
+      '--cf-ring:var(--cds-shadow-field-ring,inset 0 0 0 1px rgba(0,0,0,.1));' +
+      '--cf-card:var(--cds-radius-card,12px);' +
+      // Le seul rouge du depot. PAS de var(--cds-…) ici : les autres tokens sont deduits de
+      // classes reellement observees sur le composant copie, alors qu'aucun bouton de
+      // suppression du site n'a ete inspecte — deduire un nom sans rien avoir vu serait la
+      // « variable au hasard » que le README interdit. Assez sombre pour porter du blanc a 7:1
+      // dans les deux modes, donc une seule valeur suffit.
+      '--cf-danger:#b42318;' +
+      // Les trois couches decrites sur les composants natifs : un lisere de 1 px translucide,
+      // puis deux ombres portees d'ampleurs differentes.
+      '--cf-panel:var(--cds-shadow-panel,0 0 0 1px rgba(0,0,0,.05),0 6px 20px rgba(0,0,0,.10),' +
+        '0 1px 4px rgba(0,0,0,.06));' +
+      '--cf-panel-lg:var(--cds-shadow-panel-lg,0 0 0 1px rgba(0,0,0,.05),' +
+        '0 12px 40px rgba(0,0,0,.16),0 2px 8px rgba(0,0,0,.08))}',
+
+    // Les replis en dur, eux, ne suivent aucun theme : si le token du site manque, une modale
+    // blanche s'afficherait en mode sombre. Cette regle ne redefinit QUE la partie repli, la
+    // valeur du site restant prioritaire quand elle existe. Elle suit la preference systeme, pas
+    // le reglage de claude.ai — qu'on n'a aucun moyen fiable de lire : c'est un repli de repli.
+    '@media (prefers-color-scheme:dark){.cf-menu,.cf-modal{' +
+      '--cf-surface:var(--cds-surface-3,#2f2f2c);' +
+      '--cf-text:var(--cds-text-primary,#f5f5f4);' +
+      '--cf-hover:var(--cds-fill-ghost-hover,rgba(255,255,255,.10));' +
+      '--cf-field:var(--cds-fill-field,rgba(255,255,255,.06));' +
+      '--cf-ring:var(--cds-shadow-field-ring,inset 0 0 0 1px rgba(255,255,255,.12));' +
+      '--cf-panel:var(--cds-shadow-panel,0 0 0 1px rgba(255,255,255,.08),' +
+        '0 6px 20px rgba(0,0,0,.45),0 1px 4px rgba(0,0,0,.3));' +
+      '--cf-panel-lg:var(--cds-shadow-panel-lg,0 0 0 1px rgba(255,255,255,.08),' +
+        '0 12px 40px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.35))}}',
+
+    // font-family:inherit et pas une police nommee : le menu est appendu a documentElement, il
+    // herite donc de la police du site — y compris celle que theme.js a pu poser.
+    '.cf-menu{position:fixed;z-index:2147483647;min-width:128px;max-width:320px;padding:4px;' +
+      'border-radius:var(--cf-card);background:var(--cf-surface);color:var(--cf-text);' +
+      'box-shadow:var(--cf-panel);font-family:inherit;font-size:14px;line-height:1.4}',
+    // « all:unset » remet display a inline et efface la taille de police : les deux sont reposees
+    // APRES, comme pour .cf-btn plus haut.
+    '.cf-item{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;' +
+      'width:100%;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:14px}',
+    '.cf-item:hover,.cf-item:focus-visible{background:var(--cf-hover)}',
+    // 20 px : le gabarit des icones natives. La police de ligatures du site (Anthropicons) n'est
+    // pas repliquee — on garde le trait SVG des autres boutons de l'extension (export.js).
+    '.cf-item svg{width:20px;height:20px;flex:none;opacity:.75}',
+    '.cf-item-label{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.cf-swatches{display:flex;gap:6px;padding:6px 10px}',
+    '.cf-swatch{width:16px;height:16px;border-radius:999px;cursor:pointer;' +
+      'border:1px solid rgba(128,128,128,.35)}',
+
+    '.cf-modal{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;' +
+      'justify-content:center;background:var(--cds-backdrop,rgba(0,0,0,.45));' +
+      'font-family:inherit}',
+    '.cf-modal-box{box-sizing:border-box;display:flex;flex-direction:column;gap:12px;' +
+      'width:calc(100vw - 2rem);max-width:400px;padding:20px;border-radius:var(--cf-card);' +
+      'background:var(--cf-surface);color:var(--cf-text);box-shadow:var(--cf-panel-lg)}',
+    '.cf-modal-title{font-size:14px;font-weight:600}',
+    '.cf-modal-input{all:unset;box-sizing:border-box;width:100%;height:36px;padding:0 12px;' +
+      'border-radius:8px;background:var(--cf-field);box-shadow:var(--cf-ring);' +
+      'color:inherit;font-family:inherit;font-size:14px}',
+    '.cf-modal-message{font-size:14px;line-height:1.5;opacity:.85}',
+    '.cf-modal-actions{display:flex;justify-content:flex-end;gap:8px}',
+    '.cf-modal-btn{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;' +
+      'justify-content:center;height:36px;padding:0 14px;border-radius:8px;cursor:pointer;' +
+      'font-size:14px}',
+    '.cf-modal-btn:hover{background:var(--cf-hover)}',
+    // Le bouton primaire est l'INVERSE de la boite, pas une couleur en dur : fond sombre sur
+    // texte clair en mode clair, et l'inverse en mode sombre, sans qu'on ait a nommer un token
+    // de plus ni a savoir dans quel mode on est.
+    '.cf-modal-btn-primary{background:var(--cf-text);color:var(--cf-surface)}',
+    '.cf-modal-btn-primary:hover{background:var(--cf-text);opacity:.85}',
+    // Rouge et non « primaire foncé » : une suppression ne doit pas ressembler a un
+    // enregistrement au moment ou on la vise.
+    '.cf-modal-btn-danger{background:var(--cf-danger);color:#fff}',
+    '.cf-modal-btn-danger:hover{background:var(--cf-danger);opacity:.85}',
+    '.cf-modal-btn[disabled]{opacity:.4;cursor:default}'
   ].join('');
 
   var el = document.createElement('style');
@@ -233,6 +354,99 @@ function cfBindDrag(link, uuid) {
   });
 }
 
+// ---- bouton « − » (retirer du dossier) ---------------------------------------
+//
+// Le glisser-deposer sort deja une conversation d'un dossier (bande « Retirer »), mais c'est un
+// geste ; ce bouton est l'equivalent en un clic. Il ne double PAS la logique : il appelle le
+// meme cfApplyDrop('', uuid) que le depot sur la bande.
+//
+// Il est insere DANS le conteneur de controles natif de l'item — celui qui porte deja le bouton
+// « … » — et pas a cote : ce conteneur est cache au repos et revele par les variants
+// group-hover:/group-focus-within: poses par le site sur l'item. En s'y installant, le bouton
+// herite exactement du meme comportement d'apparition, sans qu'on gere une seule opacite.
+//
+// Ce conteneur est atteint par le PARENT du premier bouton de l'item qui n'est pas le notre.
+// Viser l'aria-label du « … » (« Plus d'options pour… ») dependrait de la langue de l'interface,
+// et ses classes sont utilitaires : ni l'un ni l'autre ne sont des ancrages acceptables ici.
+//
+// Le bouton ne porte AUCUN gestionnaire : le clic est intercepte sur window en capture, plus bas.
+function cfCtlBar(item) {
+  var buttons = item.querySelectorAll('button');
+  for (var i = 0; i < buttons.length; i++) {
+    if (!buttons[i].classList.contains('cf-unfile')) return buttons[i].parentElement;
+  }
+  return null;
+}
+
+// N'est pose QUE sur les items ranges dans un dossier : un item de « Recents » n'a pas de
+// dossier a quitter. Conteneur introuvable = on n'insere rien et on le dit une fois, plutot que
+// de coller le bouton ailleurs dans l'item, ou il serait visible en permanence.
+function cfAddUnfile(item, link) {
+  var bar = cfCtlBar(item);
+  if (!bar) {
+    cfWarn('ctl', 'aucun bouton natif dans l\'item de conversation : le bouton « − » de retrait ' +
+      'n\'est pas inséré. Le retrait par glisser-déposer sur la bande « Retirer du dossier » ' +
+      'reste disponible. Voir le tableau des sélecteurs du README.');
+    return;
+  }
+  if (bar.querySelector('.cf-unfile')) return;
+
+  var btn = cfNode('button', 'cf-unfile', '−');   // U+2212, pas un trait d'union
+  btn.type = 'button';
+
+  var title = (link.textContent || '').replace(/\s+/g, ' ').trim();
+  btn.setAttribute('aria-label',
+    'Retirer ' + (title ? '« ' + title + ' »' : 'cette conversation') + ' du dossier');
+  btn.title = 'Retirer du dossier';
+
+  bar.insertBefore(btn, bar.firstChild);
+}
+
+// Les items sont DEPLACES, jamais reconstruits : celui qui revient dans « Recents » emporterait
+// notre bouton avec lui si on ne le retirait pas ici.
+function cfDropUnfile(item) {
+  var btn = item.querySelector('.cf-unfile');
+  if (btn) btn.remove();
+}
+
+// BUG CORRIGE (vu en usage reel) : le PREMIER clic sur « − » ne faisait rien, le suivant — et tous
+// les suivants — marchait, sans rechargement de la page.
+//
+// Le gestionnaire etait pose sur le bouton, donc en phase de BOUILLONNEMENT. Il suffit qu'un
+// gestionnaire du site pose en CAPTURE sur un ancetre appelle stopPropagation() pour que le clic
+// n'atteigne JAMAIS le bouton : la capture descend depuis window, elle passe donc avant. Et une
+// bibliotheque de glissement arme couramment un « avaleur de clic » A USAGE UNIQUE en fin de geste,
+// pour que le clic qui suit un glissement ne declenche rien — d'ou « le premier clic seulement,
+// puis plus jamais ». Notre propre repli pointeur y contribue : il prive le site de son pointerup
+// et lui envoie un Échap pour qu'il annule, ce qui est justement une fin de geste.
+//
+// C'est le defaut n° 2 du bug d'epinglage (voir plus haut), au meme endroit du fichier et corrige
+// de la meme facon : interception sur WINDOW en capture, le tout premier point de la trajectoire.
+// Notre content script s'inscrit au chargement de la page, donc avant tout avaleur arme plus tard
+// par un geste.
+//
+// La delegation regle au passage le cycle de vie : le bouton est detruit et recree a chaque
+// re-rendu de la sidebar, et plus aucun exemplaire ne porte de gestionnaire a (re)brancher.
+function cfOnUnfileClick(e) {
+  if (!e.target || typeof e.target.closest !== 'function') return;
+
+  var btn = e.target.closest('.cf-unfile');
+  if (!btn) return;
+
+  // Le bouton est un frere du lien, pas un descendant : le clic ne navigue pas de lui-meme. On le
+  // neutralise quand meme, pour qu'il n'atteigne aucun gestionnaire de ligne du site.
+  e.preventDefault();
+  e.stopPropagation();
+
+  // L'uuid est relu dans le DOM plutot que garde dans une fermeture : c'est la meme regle que
+  // partout ailleurs — il ne s'obtient que par le href du lien — et il n'y a plus de fermeture.
+  var item = btn.closest(CF_ITEM);
+  var link = item && item.querySelector(CF_LINK);
+  if (link) cfApplyDrop('', folderUuidFromHref(link.getAttribute('href')));
+}
+
+window.addEventListener('click', cfOnUnfileClick, true);
+
 // ---- interception (window, phase de capture) ---------------------------------
 
 function cfOnDragOver(e) {
@@ -323,6 +537,137 @@ window.addEventListener('pointerdown', cfOnPointerDown, true);
 window.addEventListener('pointermove', cfOnPointerMove, true);
 window.addEventListener('pointerup', cfOnPointerUp, true);
 
+// ---- modales -----------------------------------------------------------------
+//
+// Remplacent window.prompt (creation, renommage) et window.confirm (suppression). Ces trois-la
+// sont des composants du NAVIGATEUR : ils s'affichent en haut de la fenetre, loin du dossier
+// qu'on vient de viser, et ne suivent ni le theme de claude.ai ni celui pose par theme.js. Nos
+// modales copient celles du site — meme boite centree, meme fond assombri, memes deux boutons.
+//
+// Une SAISIE et une CONFIRMATION partagent la coque (overlay, boite, titre, barre de boutons,
+// Échap, clic sur le fond, frappes retenues) et rien d'autre : corps different, garde-fou
+// different, touche Entree differente. D'ou deux fonctions minces sur une coque commune, plutot
+// qu'une seule a parametres optionnels — qui serait plus longue a lire que les deux reunies.
+//
+// Independantes du reste : elles ne connaissent que folders-source.js, comme tout ce fichier.
+
+function cfCloseDialog() {
+  if (cfDialogEl && cfDialogEl.parentNode) cfDialogEl.parentNode.removeChild(cfDialogEl);
+  cfDialogEl = null;
+}
+
+function cfModalBtn(label, variant) {
+  var btn = cfNode('button', 'cf-modal-btn' + (variant ? ' ' + variant : ''), label);
+  btn.type = 'button';
+  return btn;
+}
+
+// La coque ne sait rien de ce qu'elle contient : l'appelant fournit le corps (champ ou message)
+// et son bouton d'action deja cable. Elle n'ajoute que « Annuler » et les trois facons de fermer
+// sans agir — bouton, Échap, clic sur le fond.
+function cfShell(title, body, action) {
+  cfCloseDialog();
+
+  var overlay = cfNode('div', 'cf-modal');
+  var box = cfNode('div', 'cf-modal-box');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+
+  var cancel = cfModalBtn('Annuler');
+  cancel.addEventListener('click', cfCloseDialog);
+
+  // Le fond assombri, et seulement lui : un clic dans la boite ne ferme rien.
+  overlay.addEventListener('mousedown', function (e) {
+    if (e.target === overlay) cfCloseDialog();
+  });
+
+  // Aucune frappe faite dans la modale ne doit atteindre le site : claude.ai ecoute le clavier
+  // sur le document pour ses propres raccourcis, et une lettre tapee ici n'a rien a y faire.
+  // C'est la meme preoccupation que le reste du fichier, dans l'autre sens — ici on retient nos
+  // evenements plutot que d'intercepter les siens, donc le bouillonnement suffit : ils partent
+  // de la boite, ils passent forcement par l'overlay avant d'en sortir.
+  //
+  // La coque ne traite qu'Échap : c'est la seule touche qui veut dire la meme chose dans les
+  // deux modales. Entree n'appartient qu'a la saisie, qui la branche elle-meme sur son champ.
+  ['keydown', 'keyup', 'keypress'].forEach(function (name) {
+    overlay.addEventListener(name, function (e) {
+      e.stopPropagation();
+      if (name !== 'keydown' || folderDialogKeyAction(e.key) !== 'cancel') return;
+      e.preventDefault();
+      cfCloseDialog();
+    });
+  });
+
+  var actions = cfNode('div', 'cf-modal-actions');
+  actions.appendChild(cancel);
+  actions.appendChild(action);
+
+  box.appendChild(cfNode('div', 'cf-modal-title', title));
+  box.appendChild(body);
+  box.appendChild(actions);
+  overlay.appendChild(box);
+  document.documentElement.appendChild(overlay);
+
+  cfDialogEl = overlay;
+  return cancel;
+}
+
+// Saisie d'un nom : creation (champ vide) comme renommage (champ pre-rempli).
+function cfDialog(title, value, actionLabel, onSave) {
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'cf-modal-input';
+  input.value = value;
+  input.setAttribute('aria-label', title);
+  // Le nettoyage coupe deja a cette longueur : la borner ici evite de saisir un texte qui
+  // disparaitrait silencieusement a l'enregistrement.
+  input.maxLength = FOLDER_NAME_MAX;
+
+  var save = cfModalBtn(actionLabel, 'cf-modal-btn-primary');
+
+  // Le bouton grise et la touche Entree posent la MEME question, une seule fois ecrite.
+  function sync() { save.disabled = !folderNameSubmittable(input.value); }
+
+  // Un champ vide ne ferme pas la modale : la refermer sans rien ecrire se lirait comme une
+  // sauvegarde reussie. On ferme AVANT d'appeler onSave, pour que l'ecriture en storage et le
+  // redessin qu'elle declenche ne trouvent plus la modale ouverte.
+  function commit() {
+    if (!folderNameSubmittable(input.value)) return;
+    var name = input.value;
+    cfCloseDialog();
+    onSave(name);
+  }
+
+  input.addEventListener('input', sync);
+  save.addEventListener('click', commit);
+  input.addEventListener('keydown', function (e) {
+    if (folderDialogKeyAction(e.key) !== 'submit') return;
+    e.preventDefault();
+    commit();
+  });
+
+  cfShell(title, input, save);
+  sync();
+  input.focus();
+  input.select();   // pre-selectionne : au renommage, retaper suffit a remplacer le nom
+}
+
+// Confirmation d'une action destructrice : pas de champ, donc rien a valider et aucun bouton
+// jamais grise — le garde-fou n'est pas dans la saisie, il est dans le geste demande.
+//
+// C'est « Annuler » qui prend le focus, pas le bouton rouge : Entree et Échap referment donc
+// tous deux sans rien detruire, et confirmer demande un geste explicite. L'inverse d'un
+// window.confirm, dont la touche Entree valide.
+function cfConfirm(title, message, actionLabel, onConfirm) {
+  var act = cfModalBtn(actionLabel, 'cf-modal-btn-danger');
+  act.addEventListener('click', function () {
+    cfCloseDialog();
+    onConfirm();
+  });
+
+  cfShell(title, cfNode('div', 'cf-modal-message', message), act).focus();
+}
+
 // ---- menu contextuel ---------------------------------------------------------
 
 function cfCloseMenu() {
@@ -330,16 +675,54 @@ function cfCloseMenu() {
   cfMenuEl = null;
 }
 
+// Icone au trait, comme celles d'export.js : les icones natives du menu passent par une police
+// de ligatures proprietaire (Anthropicons), qu'on ne cherche pas a repliquer. Seuls le
+// conteneur et la mise en forme du texte copient le natif.
+function cfIcon(d) {
+  var ns = 'http://www.w3.org/2000/svg';
+  var svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+
+  var path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', d);
+  svg.appendChild(path);
+  return svg;
+}
+
+// Structure de l'item natif : une icone de gabarit fixe, puis un libelle qui prend la place
+// restante et se tronque. Le raccourci clavier du troisieme span n'a pas d'equivalent chez nous.
+function cfItem(label, d) {
+  var btn = cfNode('button', 'cf-item');
+  btn.type = 'button';
+  btn.setAttribute('role', 'menuitem');
+  btn.appendChild(cfIcon(d));
+  btn.appendChild(cfNode('span', 'cf-item-label', label));
+  return btn;
+}
+
+// Crayon et corbeille au trait. Le rayon d'arc du crayon (3) couvre la corde de 5,66 : en
+// dessous, le navigateur redimensionne les rayons lui-meme et l'arc se deforme.
+var CF_ICON_RENAME = 'M4 20h4L19 9a3 3 0 10-4-4L4 16v4z';
+var CF_ICON_DELETE = 'M4 7h16M10 7V5a1 1 0 011-1h2a1 1 0 011 1v2M6 7v12a1 1 0 001 1h10a1 1 0 001-1V7';
+
 function cfMenu(folder, x, y) {
   cfCloseMenu();
 
   var menu = cfNode('div', 'cf-menu');
+  menu.setAttribute('role', 'menu');
 
-  var rename = cfNode('button', null, 'Renommer');
+  var rename = cfItem('Renommer', CF_ICON_RENAME);
   rename.addEventListener('click', function () {
     cfCloseMenu();
-    var name = window.prompt('Nouveau nom du dossier', folder.name);
-    if (name !== null) cfSaveFolders(folderRename(cfFolders, folder.id, name));
+    cfDialog('Renommer le dossier', folder.name, 'Enregistrer', function (name) {
+      cfSaveFolders(folderRename(cfFolders, folder.id, name));
+    });
   });
   menu.appendChild(rename);
 
@@ -356,16 +739,13 @@ function cfMenu(folder, x, y) {
   });
   menu.appendChild(swatches);
 
-  var del = cfNode('button', null, 'Supprimer le dossier');
+  var del = cfItem('Supprimer le dossier', CF_ICON_DELETE);
   del.addEventListener('click', function () {
     cfCloseMenu();
-    // Le libelle dit explicitement que les conversations survivent : c'est la question que se
-    // pose l'utilisateur devant un « Supprimer ».
-    var n = folderCount(cfAssign, folder.id);
-    var msg = 'Supprimer le dossier « ' + folder.name + ' » ?\n\n' +
-      (n ? 'Ses ' + n + ' conversation' + (n > 1 ? 's' : '') + ' retourneront dans Récents. '
-         : '') + 'Aucune conversation ne sera supprimée.';
-    if (window.confirm(msg)) cfSaveBoth(folderDelete(cfFolders, cfAssign, folder.id));
+    cfConfirm('Supprimer le dossier « ' + folder.name + ' » ?',
+      folderDeleteMessage(folderCount(cfAssign, folder.id)), 'Supprimer', function () {
+        cfSaveBoth(folderDelete(cfFolders, cfAssign, folder.id));
+      });
   });
   menu.appendChild(del);
 
@@ -451,8 +831,11 @@ function cfRoot(parent) {
     var add = cfNode('button', 'cf-btn', '+');
     add.title = 'Nouveau dossier';
     add.addEventListener('click', function () {
-      var name = window.prompt('Nom du nouveau dossier');
-      if (name !== null) cfSaveFolders(folderCreate(cfFolders, name));
+      // Champ vide, et non un nom par defaut : un « Dossier 1 » pre-rempli serait valide d'un
+      // Entree distrait, et il faudrait ensuite le renommer.
+      cfDialog('Nouveau dossier', '', 'Créer', function (name) {
+        cfSaveFolders(folderCreate(cfFolders, name));
+      });
     });
     bar.appendChild(add);
     root.appendChild(bar);
@@ -561,11 +944,15 @@ function cfReflow() {
     var inFolder = root.contains(item);
 
     if (target) {
+      // Avant le retour anticipe : un item deja a sa place a pu perdre son bouton dans un
+      // re-rendu du site, qui reconstruit ses controles sans toucher a notre placement.
+      cfAddUnfile(item, link);
       if (item.parentNode === target) return;
       if (!inFolder) cfLeaveSlot(item, uuid);   // premier depart : on marque sa place
       target.appendChild(item);
-    } else if (inFolder) {
-      cfReturnToSlot(item, uuid, section);
+    } else {
+      cfDropUnfile(item);
+      if (inFolder) cfReturnToSlot(item, uuid, section);
     }
   });
 
