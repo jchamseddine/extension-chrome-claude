@@ -130,6 +130,7 @@ function renderProjection(history, w5) {
   var p = project(history, w5);
 
   if (!p.enough) {
+    el.className = 'usage-projection';
     el.textContent = "Pas assez de données pour estimer le rythme (il faut 3 minutes de sondage).";
     el.hidden = false;
     return;
@@ -138,7 +139,7 @@ function renderProjection(history, w5) {
 
   var time = new Date(p.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   el.textContent = 'À ce rythme, tu atteindras ta limite de session vers ' + time + '.';
-  el.className = 'rule hot';
+  el.className = 'usage-projection is-hot';
   el.hidden = false;
 }
 
@@ -213,6 +214,29 @@ function renderSettings(settings) {
   box.checked = !!(settings && settings.notifications);
   box.addEventListener('change', function () {
     chrome.storage.local.set({ settings: { notifications: box.checked } });
+  });
+}
+
+// Les panneaux replient seulement la présentation du popup : les contrôles gardent les mêmes
+// identifiants, les mêmes écouteurs et les mêmes écritures dans chrome.storage.local.
+function bindDisclosure(toggleId, panelId) {
+  var toggle = document.getElementById(toggleId);
+  var panel = document.getElementById(panelId);
+  var closeTimer = 0;
+
+  toggle.addEventListener('click', function () {
+    var open = toggle.getAttribute('aria-expanded') === 'true';
+    window.clearTimeout(closeTimer);
+    toggle.setAttribute('aria-expanded', String(!open));
+
+    if (!open) {
+      panel.hidden = false;
+      requestAnimationFrame(function () { panel.classList.add('is-open'); });
+      return;
+    }
+
+    panel.classList.remove('is-open');
+    closeTimer = window.setTimeout(function () { panel.hidden = true; }, 140);
   });
 }
 
@@ -362,6 +386,8 @@ function renderTheme(stored) {
 
 chrome.storage.local.get(['usage', 'usageHistory', 'settings', 'status']
   .concat(THEME_KEYS).concat(AC_KEYS)).then(function (o) {
+  bindDisclosure('autocontinue-toggle', 'autocontinue-panel');
+  bindDisclosure('theme-toggle', 'theme-panel');
   renderSettings(o.settings);
   renderAutoContinue(o);
   renderTheme(o);
