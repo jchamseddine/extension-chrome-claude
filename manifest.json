@@ -4,10 +4,25 @@
   "version": "1.0.0",
   "description": "Affiche l'usage de session (5h) et hebdomadaire (7j) de claude.ai, plus une estimation du contexte de la conversation en cours.",
   "minimum_chrome_version": "111",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "claude-usage@local",
+      "strict_min_version": "128.0"
+    }
+  },
   "permissions": ["storage", "notifications", "alarms", "scripting"],
   "host_permissions": ["https://claude.ai/*", "https://*.claude.ai/*", "https://status.claude.com/*"],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": [
+      "compat.js",
+      "common.js",
+      "usage-source.js",
+      "status-source.js",
+      "autocontinue-source.js",
+      "autocontinue-bg.js",
+      "background.js"
+    ]
   },
   "action": {
     "default_popup": "popup.html",
@@ -22,34 +37,34 @@
     },
     {
       "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
-      "js": ["content.js", "context-estimator.js"],
+      "js": ["compat.js", "content.js", "context-estimator.js"],
       "run_at": "document_start"
     },
     {
       "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
       "exclude_matches": ["https://a.claude.ai/*"],
-      "js": ["theme.js"],
+      "js": ["compat.js", "theme.js"],
       "run_at": "document_start"
     },
     {
       "matches": ["https://a.claude.ai/*"],
-      "js": ["theme.js"],
+      "js": ["compat.js", "theme.js"],
       "run_at": "document_start",
       "all_frames": true
     },
     {
       "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
-      "js": ["autocontinue-source.js", "autocontinue.js"],
+      "js": ["compat.js", "autocontinue-source.js", "autocontinue.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
-      "js": ["folders-source.js", "folders.js"],
+      "js": ["compat.js", "folders-source.js", "folders.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
-      "js": ["export-source.js", "export.js"],
+      "js": ["compat.js", "export-source.js", "export.js"],
       "run_at": "document_idle"
     }
   ]

@@ -9,14 +9,26 @@
 // appeler directement.
 'use strict';
 
-importScripts('common.js');        // utilOf(), colorFor(), resetText(), USAGE_LABELS
-importScripts('usage-source.js');  // usageUrl(), orgsUrl(), pickOrgId(), parseUsage()
-importScripts('status-source.js'); // STATUS_URL, parseStatus()
+// importScripts() n'existe QUE dans un WorkerGlobalScope. Chrome charge bien ce fichier dans
+// un vrai service worker, mais Firefox ne supporte pas "background.service_worker" : il lit
+// "background.scripts" et instancie une EVENT PAGE, c'est-a-dire une page HTML cachee, ou
+// importScripts est undefined. Sans ce garde, la ligne suivante leve un ReferenceError et rien
+// de ce fichier ne s'execute — ni alarme, ni sondage, ni icone.
+//
+// ⚠️ La liste ci-dessous est DOUBLEE dans "background.scripts" du manifest, qui charge les
+// memes fichiers dans le meme ordre pour Firefox. Les deux doivent rester synchronisees :
+// n'en modifier qu'une casse UN SEUL des deux navigateurs, jamais les deux — une panne
+// asymetrique, donc facile a ne pas voir.
+if (typeof importScripts === 'function') {
+  importScripts('common.js');        // utilOf(), colorFor(), resetText(), USAGE_LABELS
+  importScripts('usage-source.js');  // usageUrl(), orgsUrl(), pickOrgId(), parseUsage()
+  importScripts('status-source.js'); // STATUS_URL, parseStatus()
 
-// Auto-continue : fonctionnalite a part, qui ne partage rien avec ce qui precede. Ces deux
-// lignes sont tout son ancrage cote worker — les retirer la supprime entierement.
-importScripts('autocontinue-source.js'); // AC_KEYS, acSettings(), acMaxReached()
-importScripts('autocontinue-bg.js');     // alarme + sondage des onglets
+  // Auto-continue : fonctionnalite a part, qui ne partage rien avec ce qui precede. Ces deux
+  // lignes sont tout son ancrage cote worker — les retirer la supprime entierement.
+  importScripts('autocontinue-source.js'); // AC_KEYS, acSettings(), acMaxReached()
+  importScripts('autocontinue-bg.js');     // alarme + sondage des onglets
+}
 
 var TRACK = 'rgba(128,128,128,0.30)';
 
