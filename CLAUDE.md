@@ -120,10 +120,39 @@ obligatoire »**, et ne pas ajouter un sélecteur de conteneur par contexte : c'
 que cet ordre évite. Le slot ne sert que de repli, et l'arrêt propre ne subsiste que si les deux
 manquent.
 
+Le dépôt est **porté sur Firefox** (MV3), avec un **manifest unique** partagé avec Chrome.
+Vérifié en conditions réelles sur Firefox 153 et Chrome 150 ; le détail des mesures, des
+verdicts et des réserves est dans la section « Portage Firefox » du README. Trois pièges
+seulement méritent d'être connus avant de toucher au code :
+
+⚠️ `background` porte **deux** clés : `service_worker` (Chrome) et `scripts` (Firefox, qui ne
+supporte pas `service_worker` et instancie une **event page**). Les mêmes six fichiers sont donc
+listés **à deux endroits**, dans le même ordre — le tableau `scripts` du manifest, et les
+`importScripts()` en tête de `background.js`. Rien ne les synchronise : n'en modifier qu'un casse
+**un seul** des deux navigateurs, ce qui en fait une panne asymétrique, facile à ne pas voir.
+`importScripts` n'existant que dans un `WorkerGlobalScope`, il est protégé par
+`if (typeof importScripts === 'function')` — **ne pas retirer ce garde**, c'était le premier
+obstacle réel du portage.
+
+⚠️ `compat.js` doit être chargé **en premier** dans chaque contexte : tableau `scripts`, chaque
+entrée `content_scripts` **sauf** celle en `world: "MAIN"` (aucune API d'extension n'y existe),
+et `popup.html`. Il aliase `chrome` sur `browser`, et c'est un **filet de sécurité, pas un
+correctif** : sur Firefox 153 `chrome.*` rend déjà des promesses, mais ce comportement n'est
+documenté nulle part. Deux conséquences : après l'alias `chrome.*` **est** `browser.*`, qui est
+promise-only, donc tout appel en **style callback** devient suspect — le dépôt n'en compte qu'un,
+`show()` dans `background.js` ; et le fichier étant évalué **six fois par frame** (une par entrée
+`content_scripts`), il doit rester **strictement idempotent** : aucun compteur, aucun log.
+
+⚠️ `strict_min_version: "128.0"` vient de `world: "MAIN"` (Firefox 128+), **pas** du comportement
+de `chrome.*`. Ne pas l'abaisser en croyant qu'il protège les promesses : sous 128, `world` est
+une clé inconnue donc ignorée, `inject.js` atterrit dans le monde isolé, et l'estimation de
+contexte cesse **silencieusement** de fonctionner.
+
 ## Contraintes techniques
 
-- Manifest V3 uniquement, JS vanilla, pas de build step (chargeable directement en mode
-  développeur via chrome://extensions).
+- Manifest V3 uniquement, JS vanilla, pas de build step — chargeable directement en mode
+  développeur via chrome://extensions, ou via `about:debugging` côté Firefox. **Un seul
+  manifest pour les deux navigateurs** : voir les pièges ci-dessus avant d'y toucher.
 - Toutes les données restent en local (chrome.storage.local) — jamais de serveur tiers. Le
   réseau émis par l'extension va vers claude.ai (sondage d'usage) et status.claude.com
   (sondage de statut), rien d'autre.

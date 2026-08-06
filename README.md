@@ -1286,6 +1286,151 @@ chrome.storage.local.set({ status: { updatedAt: Date.now(), data: {
 } } });
 ```
 
+## Portage Firefox
+
+**Manifest unique**, pas deux dossiers : `background.service_worker` (Chrome) et
+`background.scripts` (Firefox) cohabitent dans le même `manifest.json`. Chrome émet le seul
+avertissement `'background.scripts' requires manifest version of 2 or lower`, charge
+normalement et continue d'utiliser son service worker — vérifié en mesurant que `compat.js`
+n'y est **pas** évalué. Deux manifests séparés auraient imposé de dupliquer 16 fichiers sans
+build step.
+
+Le plancher `browser_specific_settings.gecko.strict_min_version` est à **128.0**, et il vient
+de `world: "MAIN"` (support Firefox 128+) — pas du comportement de `chrome.*`.
+
+### Trois pièges à ne pas re-deviner
+
+**1. La liste des scripts d'arrière-plan est doublée, et rien ne la synchronise.**
+`background` porte **deux** clés : `service_worker` (Chrome) et `scripts` (Firefox, qui ne
+supporte pas `service_worker` et instancie une **event page**). Les mêmes six fichiers sont donc
+listés **à deux endroits**, dans le même ordre : le tableau `scripts` du manifest, et les
+`importScripts()` en tête de `background.js`. En modifier un seul casse **un seul** des deux
+navigateurs — panne asymétrique, donc facile à ne pas voir. `importScripts` n'existant que dans
+un `WorkerGlobalScope`, il est protégé par `if (typeof importScripts === 'function')` : **ne pas
+retirer ce garde**, c'était le premier obstacle réel du portage.
+
+**2. `compat.js` se charge en premier, partout.** En tête du tableau `scripts`, en tête de
+chaque entrée `content_scripts` — sauf celle en `world: "MAIN"`, où aucune API d'extension
+n'existe et où il serait un no-op garanti — et en tête de `popup.html`. Il aliase `chrome` sur
+`browser`. C'est un **filet de sécurité, pas un correctif** : sur Firefox 153 `chrome.*` rend
+déjà des promesses, mais ce comportement n'est documenté nulle part (MDN dit seulement que
+`chrome.*` **accepte** les callbacks). Deux conséquences à ne pas oublier :
+
+- après l'alias, `chrome.*` **est** `browser.*`, qui est promise-only : tout appel en **style
+  callback** devient suspect. Le dépôt n'en compte qu'**un**, `show()` dans `background.js`
+  (mesuré fonctionnel, mais ne pas en réintroduire d'autres) ;
+- le fichier est évalué **une fois par entrée `content_scripts`**, soit six fois par frame dans
+  le même monde isolé. Il doit rester **strictement idempotent** : aucun compteur, aucun log,
+  aucun effet de bord cumulatif.
+
+**3. Le plancher 128 vient de `world: "MAIN"`, pas de `chrome.*`.** Ne pas l'abaisser en croyant
+qu'il protège les promesses. Sous Firefox 128, `world` est une clé inconnue, donc **ignorée** :
+`inject.js` atterrit dans le monde isolé, y patche le `fetch` du content script au lieu de celui
+de la page, et l'estimation de contexte cesse de fonctionner **silencieusement** — sans erreur,
+sans log, avec juste une pastille qui n'affiche jamais rien.
+
+### Mesures faites
+
+Toutes en conditions réelles, sur **Firefox 153.0** et **Chrome 150.0.7871.187**. Ce tableau
+existe parce que l'audit initial avait classé plusieurs de ces points « à vérifier » : trois
+des cinq se sont révélés sans objet, et c'est le genre de conclusion qu'on re-devine à tort si
+elle n'est pas écrite.
+
+| Point | Verdict |
+|---|---|
+| `importScripts()` en event page Firefox | ❌ **Confirmé bloquant.** `ReferenceError` dès la ligne 12 de `background.js` — c'est un appel de `WorkerGlobalScope`, absent d'une event page. D'où le garde `if (typeof importScripts === 'function')` |
+| `chrome.*` rend-il des promesses en Firefox ? | ✅ **Oui**, contrairement à ce que laisse croire la doc. Les ~29 chaînes `.then()` marchent telles quelles. Voir `compat.js` pour pourquoi on aliase quand même |
+| `OffscreenCanvas` + `action.setIcon({imageData})` | ✅ **Fonctionne**, y compris `convertToBlob()` + `btoa()`. Vérifié visuellement (icône réellement repeinte), pas seulement sur le retour d'API |
+| `notifications.create()` | ✅ **Fonctionne** — voir ci-dessous |
+| Sondage d'usage **tous onglets fermés** | ✅ **Fonctionne** — voir ci-dessous |
+| Cadence de l'**auto-continue** en arrière-plan | ✅ **5 s, comme sur Chrome** — mesuré sur 5 min seulement, voir la réserve ci-dessous |
+| **Export** PDF et Markdown | ✅ **Fonctionne**, y compris dans une conversation de Projet — voir ci-dessous |
+| `world: "MAIN"` et `all_frames` | Supportés depuis Firefox 128, d'où le plancher |
+
+#### `notifications.create()` : trois risques suspectés, aucun réel
+
+L'audit classait ce point **MOYEN, à vérifier** : la doc Mozilla ne liste que `type`, `title`,
+`message` et `iconUrl` comme propriétés supportées, et la validation de schéma WebExtension est
+réputée stricte. Trois causes de rupture étaient plausibles sur la seule ligne de `show()` :
+
+1. le `priority: 2`, propriété non documentée côté Firefox ;
+2. l'id `''` (chaîne vide) en premier argument, là où Firefox permet plutôt d'**omettre** l'id ;
+3. le **style callback** de cet appel — c'est le **seul** du dépôt, tout le reste est en
+   `.then()` — alors que `compat.js` fait de `chrome.*` un alias de `browser.*`, promise-only
+   et réputé refuser un argument surnuméraire.
+
+**Les quatre variantes réussissent sur Firefox 153**, et les quatre notifications s'affichent
+réellement à l'écran (vérifié visuellement, pas seulement `OK` en console). **Rien à corriger
+dans `show()`.** L'audit avait sur-estimé le risque sur ce point précis.
+
+#### Sondage d'usage tous onglets fermés : les cookies passent
+
+L'audit redoutait que le `fetch` direct de `fetchJson()`, émis depuis une origine
+`moz-extension://`, soit une requête **cross-site** dont les cookies `SameSite=Lax/Strict` de
+claude.ai seraient écartés — ce qui aurait forcé le repli permanent sur `fetchViaTab()`, donc
+la perte de la promesse « le sondage marche onglet fermé ».
+
+**Cette crainte ne se vérifie pas sur Firefox 153** : tous onglets claude.ai fermés (compté à zéro avant le test),
+un `pollUsage()` forcé écrit une donnée fraîche à 0 s, sans un seul avertissement en console —
+donc sans passer par le relais. Le comportement est le même que sur Chrome. Rien à changer.
+
+#### Cadence de l'auto-continue : 5 s tenues, mais mesurées sur 5 min seulement
+
+Le `setInterval` de 5 s d'`autocontinue-bg.js` repose sur une hypothèse **Chrome** : chaque
+`executeScript` repousse la mise en veille, donc la boucle s'auto-entretient. Rien ne
+garantissait ça sur une event page Firefox, réputée mourir après quelques dizaines de secondes
+d'inactivité ([bug 1851373](https://bugzilla.mozilla.org/show_bug.cgi?id=1851373)).
+
+Mesure sur Firefox 153, auto-continue actif, un onglet claude.ai ouvert, console d'arrière-plan
+**fermée** et Firefox minimisé pendant 5 min — les horodatages partaient en `storage` justement
+parce qu'une console attachée empêche la mise en veille et aurait garanti un faux positif :
+
+```
+ticks : 66 | duree : 303 s | cadence moyenne : 4,7 s/tick | ecarts <= 15 s : 65/65
+```
+
+**La boucle n'est pas morte une seule fois.** Les quelques écarts à 0 s sont les appels
+supplémentaires venus du réveil par l'alarme `usage-poll`, qui rejoue le premier niveau du
+fichier — ils confirment le chemin de résurrection, ils ne le contredisent pas.
+
+⚠️ **Réserve à ne pas gommer** : c'est mesuré sur **5 minutes**, dans **une** configuration.
+Ça ne dit rien d'une inactivité de plusieurs heures, ni du comportement sous pression mémoire
+ou avec d'autres extensions actives. Le résultat autorise à ne rien changer aujourd'hui, pas à
+conclure que Firefox ne recycle jamais son event page.
+
+#### Export : l'iframe 0×0 s'imprime, et l'ancrage tient dans un Projet
+
+Deux doutes distincts sur cette fonctionnalité. Le premier : `exExportPdf()` imprime une iframe
+de **0×0** (`srcdoc`, puis `contentWindow.print()`), et rien ne garantissait que Firefox accepte
+un document de taille nulle. Le second : le bouton s'ancre sur « Partager », pas sur le slot
+`div#dframe-header-actions-slot` — un ancrage qui avait déjà cassé une fois en conversation de
+Projet.
+
+**Les deux tiennent sur Firefox 153** : `print()` s'exécute sans exception, et l'export Markdown
+a été vérifié à la fois sur une conversation normale **et** dans un Projet. Le repli `try/catch`
+et son toast « Impression impossible — l'export Markdown reste disponible » n'ont pas eu à
+servir ; ils restent en place.
+
+### Réserves connues
+
+Aucune n'est bloquante, mais aucune ne doit être gommée en relisant ce document.
+
+- **La cadence de l'auto-continue n'est mesurée que sur 5 minutes**, dans une seule
+  configuration (voir plus haut). Rien n'est établi pour une inactivité de plusieurs heures,
+  sous pression mémoire, ou avec d'autres extensions actives.
+- **L'assignabilité du global `chrome` n'a jamais été mesurée dans un content script Firefox.**
+  Elle l'a été dans la page d'arrière-plan (concluante), et l'instrumentation temporaire qui
+  devait trancher le cas du content script a été retirée avant que la mesure soit refaite. Si
+  le global s'y avérait non assignable, `compat.js` y retomberait sur son `catch` et les content
+  scripts resteraient sur le `chrome.*` natif — qui **fonctionne** sur Firefox 153. Ce serait
+  donc une couverture partielle de l'assurance (arrière-plan et popup oui, content scripts non),
+  **pas une panne**. Se remesure en remettant une ligne dans `compat.js` et en lisant la console
+  d'un onglet claude.ai.
+- **Le linter AMO n'a pas été passé.** Si l'extension doit être signée pour une installation
+  permanente en Firefox release, il verra `background.service_worker` et émettra probablement son
+  propre avertissement. Avertissement ≠ rejet, mais ce n'est pas vérifié — c'est la seule chose
+  qui pourrait rouvrir le choix du manifest unique.
+
 ## Limites connues
 
 - **Web/Service Workers = angle mort.** Un content script ne s'exécute pas dans les workers ;
