@@ -318,6 +318,23 @@ function renderAutoContinue(stored) {
 // quand rien n'est stocke, et de retour apres reinitialisation.
 var DEFAULT_ACCENT = '#c6613f';
 
+// ⚠️ Pas de <input type="color"> ici, et ne pas en remettre : sur Firefox, le selecteur natif
+// est une fenetre separee, et l'ouverture d'une fenetre tue le popup ancre (bug Mozilla 1292701,
+// toujours ouvert). Le popup meurt AVANT le premier "input", donc le choix est perdu. Palette +
+// saisie hexadecimale : deux controles ordinaires, aucune fenetre du systeme. Voir le README.
+//
+// Le premier cran est la valeur par defaut, pour que « Reinitialiser » retombe sur une pastille
+// visiblement selectionnee.
+var ACCENT_PRESETS = ['#c6613f', '#b45309', '#4d7c0f', '#0f766e', '#0369a1', '#4338ca', '#7e22ce', '#be185d'];
+
+// theme.js (accentValid) n'accepte que la forme #rrggbb : c'est la seule qu'on ecrive. A la
+// saisie, en revanche, le « # » et la casse sont libres.
+function accentNormalize(raw) {
+  var v = String(raw == null ? '' : raw).trim();
+  if (v.charAt(0) !== '#') v = '#' + v;
+  return /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : null;
+}
+
 // Ordre des crans des deux curseurs : l'index 1 est le prereglage neutre, qui n'injecte rien
 // cote theme.js.
 var WEIGHT_PRESETS = ['thin', 'normal', 'bold'];
@@ -336,28 +353,74 @@ function presetIndex(list, value) {
 // storage.onChanged et repeint tous les onglets claude.ai ouverts. Le popup n'a donc rien a
 // envoyer aux onglets, et l'extension n'a besoin ni de "tabs" ni de "scripting".
 function renderTheme(stored) {
-  var accent = document.getElementById('accent');
+  var swatches = document.getElementById('accentSwatches');
+  var hex = document.getElementById('accentHex');
+  var preview = document.getElementById('accentPreview');
   var weight = document.getElementById('fontWeight');
   var radius = document.getElementById('radiusPreset');
   var family = document.getElementById('fontFamily');
 
-  accent.value = (typeof stored.accentColor === 'string' && /^#[0-9a-f]{6}$/i.test(stored.accentColor))
-    ? stored.accentColor
-    : DEFAULT_ACCENT;
+  var accent = accentNormalize(stored.accentColor) || DEFAULT_ACCENT;
+
   weight.value = String(presetIndex(WEIGHT_PRESETS, stored.fontWeightPreset));
   radius.value = String(presetIndex(RADIUS_PRESETS, stored.radiusPreset));
   family.value = ['sans', 'serif', 'mono'].indexOf(stored.fontFamily) === -1 ? '' : stored.fontFamily;
 
+  // paint() ne touche PAS au champ de saisie : pendant la frappe, le reecrire deplacerait le
+  // curseur et se battrait avec la casse tapee. show() est la version complete, pour les cas ou
+  // c'est le code qui impose la valeur (rendu initial, pastille, sortie du champ, reinit).
+  function paint(value) {
+    accent = value;
+    preview.style.background = value;
+    for (var i = 0; i < swatches.children.length; i++) {
+      var b = swatches.children[i];
+      b.setAttribute('aria-pressed', String(b.dataset.color === value));
+    }
+  }
+
+  function show(value) {
+    paint(value);
+    hex.value = value;
+    hex.setAttribute('aria-invalid', 'false');
+  }
+
+  function saveAccent(value) { chrome.storage.local.set({ accentColor: value }); }
+
+  ACCENT_PRESETS.forEach(function (c) {
+    var b = node('button', 'swatch');
+    b.type = 'button';
+    b.dataset.color = c;
+    b.style.background = c;
+    b.setAttribute('aria-label', "Couleur d'accent " + c);
+    b.addEventListener('click', function () { show(c); saveAccent(c); });
+    swatches.appendChild(b);
+  });
+
+  show(accent);
+
+  // Meme apercu live que les curseurs : on ecrit des que la saisie forme une couleur complete,
+  // sans attendre la validation.
+  hex.addEventListener('input', function () {
+    var v = accentNormalize(hex.value);
+    hex.setAttribute('aria-invalid', v ? 'false' : 'true');
+    if (!v) return;
+    paint(v);
+    saveAccent(v);
+  });
+
+  // A la sortie du champ, on reaffiche la couleur reellement appliquee : sinon une saisie restee
+  // incomplete resterait a l'ecran alors qu'elle n'a jamais ete ecrite.
+  hex.addEventListener('blur', function () { show(accent); });
+
   // "input" : les controles natifs emettent en continu pendant le glissement, ce qui donne un
   // apercu live. chrome.storage.local n'a pas de quota d'ecriture horaire.
-  // "change" en filet : le selecteur de couleur s'ouvre dans une fenetre separee et le popup
-  // peut perdre le focus ; si les "input" du glissement se perdent, la validation ecrit quand meme.
+  // "change" en filet, pour les chemins qui n'emettent pas "input" (clavier sur le <select>,
+  // relachement apres un glissement avorte).
   function bind(el, save) {
     el.addEventListener('input', save);
     el.addEventListener('change', save);
   }
 
-  bind(accent, function () { chrome.storage.local.set({ accentColor: accent.value }); });
   bind(weight, function () {
     chrome.storage.local.set({ fontWeightPreset: WEIGHT_PRESETS[Number(weight.value)] });
   });
@@ -372,7 +435,7 @@ function renderTheme(stored) {
   });
 
   document.getElementById('themeReset').addEventListener('click', function () {
-    accent.value = DEFAULT_ACCENT;
+    show(DEFAULT_ACCENT);
     weight.value = String(NEUTRAL_INDEX);
     radius.value = String(NEUTRAL_INDEX);
     family.value = '';

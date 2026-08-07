@@ -59,6 +59,15 @@ n'a qu'un détecteur, `acTick()`, réveillé soit par un `MutationObserver`, soi
 worker — d'où l'impossibilité structurelle du double-clic. Testé par
 `node test-autocontinue.js` (logique pure) et `node test-autocontinue-dom.js` (DOM bouchonné).
 
+⚠️ Le contrôle de couleur d'accent du popup est une **palette + un champ hexadécimal**, jamais un
+`<input type="color">` : sur Firefox le sélecteur natif est une fenêtre, et l'ouverture d'une
+fenêtre **ferme le popup ancré** (bug Mozilla 1292701, ouvert depuis 2016) — avant tout
+événement `input`, donc écouter `input` ne rattrape rien, c'était déjà le cas. La règle générale
+est plus large que la couleur : **aucun contrôle ouvrant une fenêtre du système dans le popup**
+(`type="file"` compris). Même interface sur les deux navigateurs, exprès : un reniflage
+d'`userAgent` donnerait deux interfaces à maintenir en parallèle. Testé par
+`node test-popup-accent.js`, détail et options écartées dans le README.
+
 ⚠️ Convention à ne pas casser : `autoContinueMaxCount === 0` signifie **illimité**, partout
 (`AC_UNLIMITED`). C'est aussi ce que rend `acSettings()` pour une clé absente ou aberrante, donc
 un réglage non configuré ne bloque jamais. Une comparaison `count >= maxCount` nue bloquerait

@@ -383,6 +383,26 @@ un facteur multiplicatif écrase l'écart sur les teintes sombres. Exemples :
 `node test-theme.js` (calculs purs) et `node test-theme-dom.js` (ce qui est réellement écrit
 dans un document donné ; jsdom optionnel).
 
+##### ⚠️ Le contrôle du popup n'est pas un `<input type="color">`, et ne doit pas le redevenir
+
+Huit pastilles cliquables plus un champ hexadécimal libre, pas le sélecteur natif : sur Firefox,
+celui-ci s'ouvre en **fenêtre séparée**, et l'ouverture d'une fenêtre **tue le popup ancré**
+avant même que l'utilisateur ait choisi une couleur ([bug Mozilla
+1292701](https://bugzilla.mozilla.org/show_bug.cgi?id=1292701), toujours ouvert). Le
+raisonnement complet et les options écartées sont dans *Portage Firefox* → [Le sélecteur de
+couleur natif tue le popup](#le-sélecteur-de-couleur-natif-tue-le-popup-firefox). Deux
+conséquences pour qui touche à `renderTheme()` :
+
+- le champ hexadécimal écrit sur `input`, dès que la saisie forme un `#rrggbb` complet, mais
+  **ne réécrit pas le champ** à ce moment-là : le normaliser pendant la frappe déplacerait le
+  curseur et corrigerait la casse tapée. La forme canonique n'est remise qu'à la sortie du
+  champ, ce qui rattrape aussi une saisie restée incomplète ;
+- **le rendu n'écrit rien.** Une couleur absente s'affiche par défaut sans être stockée, sinon
+  ouvrir le popup recréerait la clé que « Réinitialiser » vient de supprimer.
+
+Testé par `node test-popup-accent.js` (DOM bouchonné en dur, sans jsdom : `renderTheme()` ne se
+sert que de sept méthodes).
+
 #### Poids, coins/ombres, police : dérivés des valeurs d'origine
 
 Ces trois réglages ne posent **aucune valeur en dur** : ils lisent les tokens du site à
@@ -1346,6 +1366,7 @@ elle n'est pas écrite.
 | Cadence de l'**auto-continue** en arrière-plan | ✅ **5 s, comme sur Chrome** — mesuré sur 5 min seulement, voir la réserve ci-dessous |
 | **Export** PDF et Markdown | ✅ **Fonctionne**, y compris dans une conversation de Projet — voir ci-dessous |
 | `world: "MAIN"` et `all_frames` | Supportés depuis Firefox 128, d'où le plancher |
+| `<input type="color">` dans le popup | ❌ **Confirmé bloquant** sur Firefox 153.0.3 : le popup se ferme à l'ouverture du sélecteur natif, le choix est perdu. Corrigé en retirant l'`input` — voir ci-dessous |
 
 #### `notifications.create()` : trois risques suspectés, aucun réel
 
@@ -1411,6 +1432,53 @@ a été vérifié à la fois sur une conversation normale **et** dans un Projet.
 et son toast « Impression impossible — l'export Markdown reste disponible » n'ont pas eu à
 servir ; ils restent en place.
 
+#### Le sélecteur de couleur natif tue le popup (Firefox)
+
+**Symptôme, constaté sur Firefox 153.0.3 / macOS** : cliquer la pastille de couleur d'accent
+ferme le popup de l'extension. Le sélecteur du système reste ouvert, mais la couleur choisie
+n'arrive nulle part — le document qui l'attendait n'existe plus. Chrome, lui, garde son popup.
+
+**Cause** : un popup d'action est un *panel* à fermeture automatique. Il se ferme à la perte de
+focus, et le sélecteur de couleur de macOS est une **fenêtre**. C'est le [bug Mozilla
+1292701](https://bugzilla.mozilla.org/show_bug.cgi?id=1292701) (« Autoclose popups shouldn't
+close when they open a modal dialog »), ouvert depuis 2016, 5 doublons, un correctif *landé puis
+retiré* pour régression Windows. Le doublon [1713107](https://bugzilla.mozilla.org/show_bug.cgi?id=1713107)
+décrit exactement notre cas. Ça vaut pour **tout** contrôle ouvrant une fenêtre du système, y
+compris un `<input type="file">` : la règle à retenir n'est pas « pas de `type="color"` », c'est
+**aucun contrôle ouvrant une fenêtre du système dans le popup**.
+
+Trois pistes examinées, dans l'ordre du moins invasif au plus :
+
+| Piste | Verdict |
+| --- | --- |
+| **1. Un réglage qui empêche la fermeture** | ❌ **Aucun.** Rien côté extension : c'est le comportement du panel, pas une option du manifest. Côté navigateur il existe `ui.popup.disable_autohide`, mais c'est une préférence de **débogage** d'`about:config`, globale à tous les panels du navigateur et à activer à la main sur chaque machine — ce n'est pas un correctif livrable. La seule parade recommandée par Mozilla est de **sortir le contrôle du panel** (page d'options, onglet, ou `windows.create()`) : ça ne garde pas le popup ouvert, ça le remplace |
+| **2. Écouter `input` plutôt que `change`** | ❌ **Sans objet : c'était déjà le cas.** `renderTheme()` liait `input` **et** `change` depuis l'arrivée du thème, et le bug est constaté avec les deux en place. C'est structurel : le popup meurt à l'**ouverture** du sélecteur, donc avant toute modification de valeur — il n'y a aucun `input` à rattraper, seulement un document mort |
+| **3. Remplacer le contrôle** | ✅ **Retenu.** Huit pastilles + un champ hexadécimal libre : deux contrôles ordinaires, aucune fenêtre du système, donc plus rien qui puisse fermer le popup |
+
+**Appliqué aux deux navigateurs**, alors que Chrome n'a pas le problème. Garder le sélecteur
+natif côté Chrome aurait voulu dire un reniflage d'`userAgent` et **deux interfaces à maintenir
+en parallèle** pour un réglage secondaire — exactement la panne asymétrique dont ce document
+tient déjà la liste (cf. la double liste des scripts d'arrière-plan). Une seule interface, un
+seul chemin testé.
+
+⚠️ **Ce qu'on perd, et qui ne se voit pas dans un diff** : la pipette et les palettes du système,
+que le sélecteur natif offrait gratuitement sur Chrome. Le champ hexadécimal garde l'accès à
+n'importe quelle couleur, mais il faut la connaître. C'est le prix payé, il est assumé.
+
+**Ce qui n'a pas été mesuré** : la piste 1 a été écartée sur documentation (Bugzilla) et sur son
+coût d'interface, pas sur une mesure. En particulier, on n'a **pas** vérifié qu'une fenêtre
+`windows.create({type:'popup'})` survit, elle, au sélecteur natif — c'est très probable (une
+fenêtre n'est pas un panel à fermeture automatique), mais ça reste une déduction. Ça n'aurait
+changé la décision que si l'on avait accepté de remplacer le popup ancré par une fenêtre.
+
+**Comment remesurer tout ça** si le comportement de Firefox change un jour : un popup mort n'a
+plus de console, donc il faut un journal qui survive au document. Instrumenter le contrôle avec
+un écouteur en capture sur `pointerdown`, `focus`, `input`, `change`, `blur`, `pagehide`, plus un
+battement toutes les 250 ms, et écrire l'ensemble dans `storage.local` en **un seul `set` par
+événement** (jamais un `get` + `set` : c'est précisément le document qui peut mourir entre les
+deux). La dernière ligne du journal, relue à l'ouverture suivante du popup, date la mort du
+document et dit quels événements l'ont précédée.
+
 ### Réserves connues
 
 Aucune n'est bloquante, mais aucune ne doit être gommée en relisant ce document.
@@ -1426,6 +1494,10 @@ Aucune n'est bloquante, mais aucune ne doit être gommée en relisant ce documen
   donc une couverture partielle de l'assurance (arrière-plan et popup oui, content scripts non),
   **pas une panne**. Se remesure en remettant une ligne dans `compat.js` et en lisant la console
   d'un onglet claude.ai.
+- **La survie d'une fenêtre `windows.create()` au sélecteur natif n'a pas été mesurée.** C'est
+  la seule variante de la piste 1 qui aurait pu marcher, et elle a été écartée sur son coût
+  d'interface (elle remplace le popup ancré), pas sur une mesure. À remesurer seulement si l'on
+  envisage un jour de sortir un contrôle du popup.
 - **Le linter AMO n'a pas été passé.** Si l'extension doit être signée pour une installation
   permanente en Firefox release, il verra `background.service_worker` et émettra probablement son
   propre avertissement. Avertissement ≠ rejet, mais ce n'est pas vérifié — c'est la seule chose
