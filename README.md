@@ -1364,6 +1364,7 @@ elle n'est pas écrite.
 | `notifications.create()` | ✅ **Fonctionne** — voir ci-dessous |
 | Sondage d'usage **tous onglets fermés** | ✅ **Fonctionne** — voir ci-dessous |
 | Cadence de l'**auto-continue** en arrière-plan | ✅ **5 s, comme sur Chrome** — mesuré sur 5 min seulement, voir la réserve ci-dessous |
+| **Déclenchement réel** de l'auto-continue (détection + clic) | ⚠️ **Non mesuré sur Firefox.** Trois tentatives de provoquer la limite de tool-use ont échoué : impossible d'atteindre les conditions du test, pas une mesure ratée — voir ci-dessous |
 | **Export** PDF et Markdown | ✅ **Fonctionne**, y compris dans une conversation de Projet — voir ci-dessous |
 | `world: "MAIN"` et `all_frames` | Supportés depuis Firefox 128, d'où le plancher |
 | `<input type="color">` dans le popup | ❌ **Confirmé bloquant** sur Firefox 153.0.3 : le popup se ferme à l'ouverture du sélecteur natif, le choix est perdu. Corrigé en retirant l'`input` — voir ci-dessous |
@@ -1418,6 +1419,40 @@ fichier — ils confirment le chemin de résurrection, ils ne le contredisent pa
 Ça ne dit rien d'une inactivité de plusieurs heures, ni du comportement sous pression mémoire
 ou avec d'autres extensions actives. Le résultat autorise à ne rien changer aujourd'hui, pas à
 conclure que Firefox ne recycle jamais son event page.
+
+#### L'auto-continue n'a jamais été vu **cliquer** sur Firefox
+
+À ne pas confondre avec la mesure ci-dessus, qui porte sur la **boucle** : on a établi
+qu'`acTick()` est bien rappelé toutes les 5 s sur une event page Firefox. On n'a **pas** établi
+ce qui se passe quand ce tick tombe sur une vraie réponse arrêtée par la limite de tool-use,
+parce que cette situation n'a jamais pu être provoquée.
+
+**Trois tentatives, trois échecs** — recherches web ciblées puis passage par un connecteur :
+Claude répond efficacement et n'atteint jamais la limite d'outils dans un seul tour. C'est une
+**impossibilité de réunir les conditions du test**, pas un échec de mesure : il n'y a pas de
+résultat négatif à consigner, il n'y a pas eu de test.
+
+Ce qui borne la portée de ce trou :
+
+- **Le mécanisme de détection est du code strictement partagé** entre Chrome et Firefox, et ce
+  portage ne l'a **pas modifié**. Les deux conditions cumulées — bouton `Continue` visible **et**
+  phrase de limite dans le seul dernier message assistant — vivent dans `autocontinue.js` et
+  `autocontinue-source.js`, sans une seule branche par navigateur. Elles restent couvertes par
+  `node test-autocontinue.js` et `node test-autocontinue-dom.js`, qui tournent hors navigateur.
+- **Le point de vigilance Firefox-spécifique de l'audit initial portait sur l'action du clic**,
+  pas sur la détection : la crainte était qu'un clic synthétique n'atteigne pas un bouton géré
+  par React, et que le contournement habituel — `document.execCommand('insertText')` — soit
+  nécessaire. ⚠️ **Cette crainte vise du code que ce dépôt n'a pas** : `acTick()` appelle
+  `button.click()` et rien d'autre (`autocontinue.js`), et `execCommand` en est **volontairement
+  absent** (voir *Limites connues*). Le risque résiduel se réduit donc à « un `click()` sur ce
+  bouton précis produit-il l'effet attendu sur Firefox ? » — plus étroit que l'audit ne le
+  laissait croire, mais **jamais vérifié en conditions réelles**, faute d'avoir pu déclencher la
+  situation.
+
+**À vérifier de façon opportuniste**, la prochaine fois que la limite de tool-use est atteinte
+naturellement en usage réel sur Firefox — c'est le seul moyen connu d'y arriver. Le journal de
+diagnostic de l'onglet (bouton, phrase, compteur, décision, message recopié) suffit alors à
+trancher sans rien instrumenter de plus.
 
 #### Export : l'iframe 0×0 s'imprime, et l'ancrage tient dans un Projet
 
@@ -1486,6 +1521,11 @@ Aucune n'est bloquante, mais aucune ne doit être gommée en relisant ce documen
 - **La cadence de l'auto-continue n'est mesurée que sur 5 minutes**, dans une seule
   configuration (voir plus haut). Rien n'est établi pour une inactivité de plusieurs heures,
   sous pression mémoire, ou avec d'autres extensions actives.
+- **L'auto-continue n'a jamais été vu cliquer sur Firefox** (voir plus haut). Trois tentatives
+  de provoquer la limite de tool-use ont échoué : la situation n'a pas pu être réunie, donc le
+  test n'a pas eu lieu. La détection est du code partagé et non modifié par le portage ; le seul
+  point réellement ouvert est l'effet d'un `button.click()` sur ce bouton React côté Firefox. À
+  saisir au vol le jour où la limite tombe naturellement en usage réel.
 - **L'assignabilité du global `chrome` n'a jamais été mesurée dans un content script Firefox.**
   Elle l'a été dans la page d'arrière-plan (concluante), et l'instrumentation temporaire qui
   devait trancher le cas du content script a été retirée avant que la mesure soit refaite. Si
