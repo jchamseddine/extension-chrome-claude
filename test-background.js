@@ -1,5 +1,5 @@
-// Test unitaire de la detection de reset de fenetre (background.js). Aucune dependance,
-// aucun framework, comme test-usage-source.js. Lance avec : node test-background.js
+// Unit test for window reset detection (background.js). No dependency,
+// no framework, like test-usage-source.js. Run with: node test-background.js
 'use strict';
 
 var assert = require('assert');
@@ -10,12 +10,12 @@ var vm = require('vm');
 function read(file) { return fs.readFileSync(path.join(__dirname, file), 'utf8'); }
 function noop() {}
 
-// background.js est charge par le service worker, pas par require() : pas de module.exports a
-// y ajouter. On l'evalue dans son propre contexte, en bouchonnant ce que le worker fournit —
-// importScripts(), qui charge les dependances dans le MEME contexte (evaluate() a besoin de
-// utilOf(), resetText() et USAGE_LABELS de common.js), et chrome, dont seul le cablage de fin
-// de fichier se sert. OffscreenCanvas n'est touche que dans le corps de canvasFor(), jamais au
-// chargement : inutile de le bouchonner.
+// background.js is loaded by the service worker, not by require(): no module.exports to
+// add to it. We evaluate it in its own context, stubbing what the worker provides —
+// importScripts(), which loads the dependencies into the SAME context (evaluate() needs
+// utilOf(), resetText() and USAGE_LABELS from common.js), and chrome, which only the wiring at the
+// end of the file uses. OffscreenCanvas is only touched inside canvasFor()'s body, never at
+// load time: no need to stub it.
 var sandbox = {
   console: console,
   importScripts: function () {
@@ -35,55 +35,55 @@ vm.runInContext(read('background.js'), sandbox);
 var tests = [];
 function test(name, fn) { tests.push({ name: name, fn: fn }); }
 
-// Bornes de reset arbitraires, en secondes Unix comme ce que parseUsage() ecrit en storage.
+// Arbitrary reset boundaries, in Unix seconds like what parseUsage() writes to storage.
 var BORNE_A = 1785000000;
 var BORNE_B = 1785018000;
-var FRAIS = 60 * 1000;   // age du sondage precedent dans le cas nominal : une minute
+var FRAIS = 60 * 1000;   // age of the previous poll in the nominal case: one minute
 
 function win(pct, resetsAt) { return { utilization: pct / 100, resets_at: resetsAt }; }
 
-// ---- isReset() : la conjonction des deux signaux -------------------------------------------
+// ---- isReset(): the conjunction of the two signals ------------------------------------------
 
-test('nouvelle borne + chute franche : c est un reset', function () {
+test('new boundary + sharp drop: this is a reset', function () {
   assert.strictEqual(sandbox.isReset(win(76, BORNE_A), win(2, BORNE_B), FRAIS), true);
 });
 
-test('nouvelle borne sans chute : pas un reset', function () {
+test('new boundary without a drop: not a reset', function () {
   assert.strictEqual(sandbox.isReset(win(76, BORNE_A), win(74, BORNE_B), FRAIS), false);
 });
 
-test('chute sans nouvelle borne : pas un reset', function () {
+test('drop without a new boundary: not a reset', function () {
   assert.strictEqual(sandbox.isReset(win(76, BORNE_A), win(2, BORNE_A), FRAIS), false);
 });
 
-test('chute pas assez franche (40 -> 25) : pas un reset', function () {
+test('drop not sharp enough (40 -> 25): not a reset', function () {
   assert.strictEqual(sandbox.isReset(win(40, BORNE_A), win(25, BORNE_B), FRAIS), false);
 });
 
-test('utilisation precedente sous le seuil notable (18 -> 0) : pas un reset', function () {
+test('previous utilization below the notable threshold (18 -> 0): not a reset', function () {
   assert.strictEqual(sandbox.isReset(win(18, BORNE_A), win(0, BORNE_B), FRAIS), false);
 });
 
-test('sondage precedent trop vieux : pas un reset', function () {
+test('previous poll too old: not a reset', function () {
   var sixHeures = 6 * 60 * 60 * 1000;
   assert.strictEqual(sandbox.isReset(win(76, BORNE_A), win(2, BORNE_B), sixHeures), false);
 });
 
-test('aucun sondage precedent : pas un reset', function () {
+test('no previous poll: not a reset', function () {
   assert.strictEqual(sandbox.isReset(undefined, win(2, BORNE_B), -1), false);
 });
 
-test('utilisation non numerique : pas un reset', function () {
+test('non-numeric utilization: not a reset', function () {
   var casse = { utilization: null, resets_at: BORNE_A };
   assert.strictEqual(sandbox.isReset(casse, win(2, BORNE_B), FRAIS), false);
   assert.strictEqual(sandbox.isReset(win(76, BORNE_A), { resets_at: BORNE_B }, FRAIS), false);
 });
 
-test('borne absente d un cote : pas un reset', function () {
+test('boundary missing on one side: not a reset', function () {
   assert.strictEqual(sandbox.isReset({ utilization: 0.76 }, win(2, BORNE_B), FRAIS), false);
 });
 
-// ---- evaluate() : messages produits et anti-spam --------------------------------------------
+// ---- evaluate(): messages produced and anti-spam ---------------------------------------------
 
 function envelope(w5, w7, ageMs) {
   return { data: { windows: { '5h': w5, '7d': w7 } }, updatedAt: Date.now() - ageMs };
@@ -91,7 +91,7 @@ function envelope(w5, w7, ageMs) {
 
 function fresh() { return { windows: {} }; }
 
-test('reset des deux fenetres : un message par fenetre', function () {
+test('reset of both windows: one message per window', function () {
   var prev = envelope(win(76, BORNE_A), win(88, BORNE_A), FRAIS);
   var data = { windows: { '5h': win(1, BORNE_B), '7d': win(0, BORNE_B) } };
 
@@ -103,7 +103,7 @@ test('reset des deux fenetres : un message par fenetre', function () {
   assert.ok(msgs[1].message.indexOf('limite hebdomadaire') !== -1, msgs[1].message);
 });
 
-test('meme reset rejoue : notifie une seule fois', function () {
+test('same reset replayed: notifies only once', function () {
   var prev = envelope(win(76, BORNE_A), win(43, BORNE_A), FRAIS);
   var data = { windows: { '5h': win(1, BORNE_B), '7d': win(43, BORNE_A) } };
   var state = fresh();
@@ -113,27 +113,27 @@ test('meme reset rejoue : notifie une seule fois', function () {
   assert.strictEqual(sandbox.evaluate(data, state, prev).length, 0);
 });
 
-test('nouvelle borne sans chute : evaluate ne produit aucun message', function () {
+test('new boundary without a drop: evaluate produces no message', function () {
   var prev = envelope(win(30, BORNE_A), win(43, BORNE_A), FRAIS);
   var data = { windows: { '5h': win(31, BORNE_B), '7d': win(43, BORNE_A) } };
 
   assert.strictEqual(sandbox.evaluate(data, fresh(), prev).length, 0);
 });
 
-test('chute sans nouvelle borne : evaluate ne produit aucun message', function () {
+test('drop without a new boundary: evaluate produces no message', function () {
   var prev = envelope(win(76, BORNE_A), win(43, BORNE_A), FRAIS);
   var data = { windows: { '5h': win(2, BORNE_A), '7d': win(43, BORNE_A) } };
   var state = fresh();
 
   assert.strictEqual(sandbox.evaluate(data, state, prev).length, 0);
-  // La descente reabaisse le seuil memorise, comme avant ce changement.
+  // The descent lowers the memorized threshold again, as before this change.
   assert.strictEqual(state.windows['5h'].threshold, 0);
   assert.strictEqual(state.windows['5h'].notifiedReset, undefined);
 });
 
-// ---- non-regression des seuils --------------------------------------------------------------
+// ---- threshold non-regression ----------------------------------------------------------------
 
-test('sans sondage precedent, les seuils fonctionnent toujours', function () {
+test('without a previous poll, the thresholds still work', function () {
   var data = { windows: { '5h': win(92, BORNE_A), '7d': win(43, BORNE_A) } };
   var state = fresh();
 
@@ -143,7 +143,7 @@ test('sans sondage precedent, les seuils fonctionnent toujours', function () {
   assert.strictEqual(state.windows['5h'].threshold, 90);
 });
 
-test('un reset ne masque pas le franchissement de seuil de l autre fenetre', function () {
+test('a reset does not mask the other window\'s threshold crossing', function () {
   var prev = envelope(win(76, BORNE_A), win(70, BORNE_A), FRAIS);
   var data = { windows: { '5h': win(1, BORNE_B), '7d': win(76, BORNE_A) } };
 
@@ -153,7 +153,7 @@ test('un reset ne masque pas le franchissement de seuil de l autre fenetre', fun
   assert.strictEqual(msgs[1].title, 'Semaine — 7 j : 75 % atteint');
 });
 
-// ---- execution ----------------------------------------------------------------------------
+// ---- run -----------------------------------------------------------------------------------
 var failed = 0;
 tests.forEach(function (t) {
   try {
@@ -166,5 +166,5 @@ tests.forEach(function (t) {
   }
 });
 
-console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passes');
+console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passed');
 if (failed) process.exit(1);

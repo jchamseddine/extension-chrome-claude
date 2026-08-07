@@ -1,66 +1,66 @@
-// Service worker. Seule source de verite pour l'usage : il interroge l'API de claude.ai
-// toutes les minutes (chrome.alarms) et ecrit la cle "usage". Il tient aussi l'historique
-// roulant, les notifications de seuil, et l'apparence de l'icone de toolbar — deux anneaux
-// concentriques dessines sur un OffscreenCanvas, exterieur = fenetre 7j, interieur = 5h,
-// plus le badge texte du % 5h.
+// Service worker. The only source of truth for usage: it queries claude.ai's API
+// every minute (chrome.alarms) and writes the "usage" key. It also keeps the rolling
+// history, the threshold notifications, and the appearance of the toolbar icon — two
+// concentric rings drawn on an OffscreenCanvas, outer = 7d window, inner = 5h,
+// plus the text badge of the 5h %.
 //
-// L'icone, l'historique et les notifications restent branches sur chrome.storage.onChanged :
-// l'evenement se declenche aussi dans le contexte qui a ecrit, donc le sondage n'a rien a
-// appeler directement.
+// The icon, the history and the notifications stay wired to chrome.storage.onChanged:
+// the event also fires in the context that wrote, so the polling has nothing to
+// call directly.
 'use strict';
 
-// importScripts() n'existe QUE dans un WorkerGlobalScope. Chrome charge bien ce fichier dans
-// un vrai service worker, mais Firefox ne supporte pas "background.service_worker" : il lit
-// "background.scripts" et instancie une EVENT PAGE, c'est-a-dire une page HTML cachee, ou
-// importScripts est undefined. Sans ce garde, la ligne suivante leve un ReferenceError et rien
-// de ce fichier ne s'execute — ni alarme, ni sondage, ni icone.
+// importScripts() exists ONLY in a WorkerGlobalScope. Chrome does load this file in
+// a real service worker, but Firefox does not support "background.service_worker": it reads
+// "background.scripts" and instantiates an EVENT PAGE, that is a hidden HTML page, where
+// importScripts is undefined. Without this guard, the next line throws a ReferenceError and nothing
+// in this file runs — no alarm, no polling, no icon.
 //
-// ⚠️ La liste ci-dessous est DOUBLEE dans "background.scripts" du manifest, qui charge les
-// memes fichiers dans le meme ordre pour Firefox. Les deux doivent rester synchronisees :
-// n'en modifier qu'une casse UN SEUL des deux navigateurs, jamais les deux — une panne
-// asymetrique, donc facile a ne pas voir.
+// Warning: the list below is DUPLICATED in the manifest's "background.scripts", which loads the
+// same files in the same order for Firefox. The two must stay in sync:
+// modifying only one breaks ONE SINGLE of the two browsers, never both — an asymmetric
+// failure, hence easy to miss.
 if (typeof importScripts === 'function') {
   importScripts('common.js');        // utilOf(), colorFor(), resetText(), USAGE_LABELS
   importScripts('usage-source.js');  // usageUrl(), orgsUrl(), pickOrgId(), parseUsage()
   importScripts('status-source.js'); // STATUS_URL, parseStatus()
 
-  // Auto-continue : fonctionnalite a part, qui ne partage rien avec ce qui precede. Ces deux
-  // lignes sont tout son ancrage cote worker — les retirer la supprime entierement.
+  // Auto-continue: a separate feature, which shares nothing with what precedes. These two
+  // lines are its entire anchoring on the worker side — removing them deletes it entirely.
   importScripts('autocontinue-source.js'); // AC_KEYS, acSettings(), acMaxReached()
-  importScripts('autocontinue-bg.js');     // alarme + sondage des onglets
+  importScripts('autocontinue-bg.js');     // alarm + tab polling
 }
 
 var TRACK = 'rgba(128,128,128,0.30)';
 
-// Ordre decroissant : on cherche le plus haut seuil franchi.
+// Descending order: we look for the highest threshold crossed.
 var THRESHOLDS = [95, 90, 75];
 var HISTORY_MAX = 50;
 var NOTIFY_ICON_SIZE = 128;
 
-// Detection de reset de fenetre : deux signaux exiges ensemble (voir isReset).
-var RESET_FROM_PCT = 20;                 // en dessous, une baisse n'a rien de significatif
-var RESET_MAX_AGE_MS = 10 * 60 * 1000;   // sondage a 1 min : au dela, Chrome dormait
+// Window reset detection: two signals required together (see isReset).
+var RESET_FROM_PCT = 20;                 // below that, a drop is not significant
+var RESET_MAX_AGE_MS = 10 * 60 * 1000;   // polling at 1 min: beyond that, Chrome was asleep
 
-// Textes propres aux notifications, donc pas dans USAGE_LABELS de common.js, qui sert aussi
-// a l'affichage du popup.
+// Texts specific to the notifications, hence not in USAGE_LABELS of common.js, which also serves
+// the popup display.
 var RESET_MESSAGES = {
   '5h': 'Ta limite de session vient de se reset, tu peux repartir à 0 %.',
   '7d': 'Ta limite hebdomadaire vient de se reset, tu peux repartir à 0 %.'
 };
 
 var ALARM = 'usage-poll';
-var POLL_MINUTES = 1;   // plancher impose par chrome.alarms
+var POLL_MINUTES = 1;   // floor imposed by chrome.alarms
 
-// Le statut bouge rarement : inutile de solliciter status.claude.com au rythme de l'usage.
+// The status rarely moves: no point hitting status.claude.com at the pace of usage.
 var STATUS_ALARM = 'status-poll';
 var STATUS_POLL_MINUTES = 5;
 
-// Les lectures-modifications-ecritures de "usageHistory" et "notifyState" sont serialisees :
-// deux onglets claude.ai peuvent ecrire "usage" a quelques millisecondes d'intervalle et se
-// liraient mutuellement une valeur perimee.
+// The read-modify-writes of "usageHistory" and "notifyState" are serialized:
+// two claude.ai tabs can write "usage" a few milliseconds apart and would
+// read a stale value from each other.
 var chain = Promise.resolve();
 
-// ---- icone -------------------------------------------------------------------
+// ---- icon --------------------------------------------------------------------
 
 function ring(ctx, center, radius, width, util, color) {
   ctx.lineWidth = width;
@@ -103,7 +103,7 @@ function render() {
     var w7 = windows ? windows['7d'] : null;
 
     chrome.action.setIcon({ imageData: { 16: paint(16, w7, w5), 32: paint(32, w7, w5) } })
-      .catch(function () { /* pas grave */ });
+      .catch(function () { /* harmless */ });
 
     var u5 = utilOf(w5);
     if (u5 === null) {
@@ -113,15 +113,15 @@ function render() {
     chrome.action.setBadgeText({ text: Math.round(u5 * 100) + '%' });
     chrome.action.setBadgeBackgroundColor({ color: colorFor(w5) });
     chrome.action.setBadgeTextColor({ color: '#ffffff' });
-  }, function () { /* pas grave */ });
+  }, function () { /* harmless */ });
 }
 
-// ---- historique roulant ------------------------------------------------------
+// ---- rolling history ---------------------------------------------------------
 
-// Un point par sondage, donc une serie reguliere a 1 point/minute — c'est ce qui donne du
-// sens a la regression lineaire du popup. Sert a projeter le moment ou la fenetre 5h
-// atteindrait 100 %. Cape a HISTORY_MAX : 50 points = 50 min, la fenetre d'ajustement du
-// popup en couvre 30.
+// One point per poll, hence a regular series at 1 point/minute — that is what gives
+// meaning to the popup's linear regression. Used to project the moment the 5h window
+// would reach 100 %. Capped at HISTORY_MAX: 50 points = 50 min, the popup's fitting
+// window covers 30 of them.
 function recordHistory(data) {
   var windows = data.windows || {};
   var point = {
@@ -139,10 +139,10 @@ function recordHistory(data) {
   });
 }
 
-// ---- notifications de seuil --------------------------------------------------
+// ---- threshold notifications -------------------------------------------------
 
-// chrome.notifications exige un iconUrl : on encode l'icone a anneaux en PNG data-URL
-// plutot que de livrer un binaire dans le depot.
+// chrome.notifications requires an iconUrl: we encode the ring icon as a PNG data-URL
+// rather than shipping a binary in the repo.
 function iconDataUrl(w7, w5) {
   return canvasFor(NOTIFY_ICON_SIZE, w7, w5)
     .convertToBlob({ type: 'image/png' })
@@ -167,7 +167,7 @@ function show(msg, url) {
   });
 }
 
-// Le plus haut seuil franchi par pct, 0 si aucun.
+// The highest threshold crossed by pct, 0 if none.
 function crossedThreshold(pct) {
   for (var i = 0; i < THRESHOLDS.length; i++) {
     if (pct >= THRESHOLDS[i]) return THRESHOLDS[i];
@@ -175,11 +175,11 @@ function crossedThreshold(pct) {
   return 0;
 }
 
-// Un reset de fenetre ne se lit pas sur resets_at seul : l'API peut renvoyer une borne
-// legerement differente d'un sondage a l'autre sans reset reel. Ni sur la seule chute du
-// pourcentage : ce serait alors une correction de mesure, pas une nouvelle fenetre. On exige
-// donc les deux ensemble, plus la fraicheur du sondage precedent — sinon on annoncerait au
-// reveil de Chrome un reset survenu il y a des heures.
+// A window reset cannot be read from resets_at alone: the API can return a slightly
+// different boundary from one poll to the next without a real reset. Nor from the percentage
+// drop alone: that would then be a measurement correction, not a new window. We therefore require
+// both together, plus the freshness of the previous poll — otherwise we would announce, on
+// Chrome's wake-up, a reset that happened hours ago.
 function isReset(prevW, w, ageMs) {
   if (typeof ageMs !== 'number' || ageMs < 0 || ageMs > RESET_MAX_AGE_MS) return false;
 
@@ -195,19 +195,19 @@ function isReset(prevW, w, ageMs) {
   return prevPct > RESET_FROM_PCT && Math.round(u * 100) < prevPct / 2;
 }
 
-// Anti-spam : on memorise le dernier seuil notifie par fenetre. On ne notifie que quand le
-// seuil franchi est SUPERIEUR au dernier notifie ; redescendre le baisse silencieusement,
-// ce qui reautorise la notification si le seuil est refranchi (reset de fenetre, par ex.).
+// Anti-spam: we memorize the last threshold notified per window. We only notify when the
+// crossed threshold is HIGHER than the last notified one; coming back down lowers it silently,
+// which re-authorizes the notification if the threshold is crossed again (window reset, for instance).
 //
-// "prev" est l'enveloppe { data, updatedAt } du sondage precedent, telle que storage.onChanged
-// la fournit en oldValue : elle vient du storage, donc elle survit au recyclage du worker.
+// "prev" is the { data, updatedAt } envelope of the previous poll, as storage.onChanged
+// provides it in oldValue: it comes from storage, so it survives the worker being recycled.
 function evaluate(data, state, prev) {
   var msgs = [];
   var windows = data.windows || {};
   var prevWindows = (prev && prev.data && prev.data.windows) || {};
   var ageMs = (prev && typeof prev.updatedAt === 'number' && isFinite(prev.updatedAt))
     ? Date.now() - prev.updatedAt
-    : -1;   // pas de sondage precedent exploitable : aucun reset detectable
+    : -1;   // no usable previous poll: no detectable reset
 
   Object.keys(USAGE_LABELS).forEach(function (key) {
     var w = windows[key];
@@ -236,9 +236,9 @@ function evaluate(data, state, prev) {
     }
     st.overLimit = over;
 
-    // Anti-spam propre au reset : on memorise la derniere borne annoncee. Redondant avec la
-    // comparaison a prev dans le cas nominal, mais garantit le "une seule fois par reset"
-    // meme si le meme sondage etait rejoue.
+    // Anti-spam specific to the reset: we memorize the last announced boundary. Redundant with the
+    // comparison against prev in the nominal case, but guarantees the "only once per reset"
+    // even if the same poll were replayed.
     if (isReset(prevWindows[key], w, ageMs) && st.notifiedReset !== w.resets_at) {
       msgs.push({
         title: label + ' : reset effectué',
@@ -250,9 +250,9 @@ function evaluate(data, state, prev) {
     state.windows[key] = st;
   });
 
-  // Vestige de l'ancien flux SSE : ce champ n'existe pas dans la reponse reelle de
-  // /organizations/<org>/usage (elle porte extra_usage/spend a la place, pas encore cables
-  // ici — voir usage-source.js). Laisse en l'etat, sans effet tant que rien ne le peuple.
+  // Leftover from the old SSE stream: this field does not exist in the real response of
+  // /organizations/<org>/usage (it carries extra_usage/spend instead, not wired up
+  // here yet — see usage-source.js). Left as-is, without effect as long as nothing populates it.
   var overage = !!(data.overageInUse || (data.resolved && data.resolved.overageInUse));
   if (overage && !state.overage) {
     msgs.push({
@@ -267,7 +267,7 @@ function evaluate(data, state, prev) {
 
 function maybeNotify(data, prev) {
   return chrome.storage.local.get(['settings', 'notifyState']).then(function (o) {
-    // Desactivees par defaut : sans reglage enregistre, on ne notifie pas.
+    // Disabled by default: without a saved setting, we do not notify.
     if (!(o.settings && o.settings.notifications)) return;
 
     var state = o.notifyState || {};
@@ -284,12 +284,12 @@ function maybeNotify(data, prev) {
   });
 }
 
-// ---- sondage de l'API --------------------------------------------------------
+// ---- API polling -------------------------------------------------------------
 
-// Le service worker n'a pas d'origine claude.ai : credentials:'include' envoie bien les
-// cookies de session, mais rien ne garantit que l'API accepte une requete sans les
-// Origin/Referer qu'elle attend. On tente donc d'abord depuis ici — ca marche onglet ferme —
-// et on se rabat sur un onglet claude.ai ouvert, ou le fetch est same-origin.
+// The service worker has no claude.ai origin: credentials:'include' does send the
+// session cookies, but nothing guarantees the API accepts a request without the
+// Origin/Referer it expects. So we try from here first — it works with the tab closed —
+// and we fall back to an open claude.ai tab, where the fetch is same-origin.
 function fetchJson(url) {
   return fetch(url, {
     credentials: 'include',
@@ -304,21 +304,21 @@ function fetchJson(url) {
   });
 }
 
-// Les onglets charges avant l'installation ou le rechargement de l'extension n'ont pas de
-// content script vivant : leur sendMessage rejette. On essaie donc les onglets a la suite.
+// Tabs loaded before the extension was installed or reloaded have no live
+// content script: their sendMessage rejects. So we try the tabs one after another.
 function askTabs(tabs, url, i, lastErr) {
   if (i >= tabs.length) {
-    throw new Error(lastErr || 'aucun onglet claude.ai ne repond (recharger l\'onglet)');
+    throw new Error(lastErr || 'no claude.ai tab responds (reload the tab)');
   }
   return chrome.tabs.sendMessage(tabs[i].id, { kind: 'fetchUsage', url: url })
     .then(function (r) {
       if (r && r.ok) return r.json;
-      var e = new Error((r && r.error) || 'reponse vide');
+      var e = new Error((r && r.error) || 'empty response');
       if (r && r.status) e.status = r.status;
       throw e;
     })
     .catch(function (e) {
-      // Un refus HTTP se reproduira a l'identique sur les autres onglets : inutile d'insister.
+      // An HTTP refusal will repeat identically on the other tabs: no point insisting.
       if (e && e.status) throw e;
       return askTabs(tabs, url, i + 1, String((e && e.message) || e));
     });
@@ -327,25 +327,25 @@ function askTabs(tabs, url, i, lastErr) {
 function fetchViaTab(url) {
   return chrome.tabs.query({ url: ['https://claude.ai/*', 'https://*.claude.ai/*'] })
     .then(function (tabs) {
-      if (!tabs.length) throw new Error('aucun onglet claude.ai ouvert');
+      if (!tabs.length) throw new Error('no claude.ai tab open');
       return askTabs(tabs, url, 0, null);
     });
 }
 
-// Un 404 dit que l'URL est fausse : le repli ne ferait que produire le meme 404 depuis
-// l'onglet. On ne se rabat que sur ce qui peut vraiment tenir a l'origine de l'appelant.
+// A 404 says the URL is wrong: the fallback would only produce the same 404 from
+// the tab. We only fall back on what can genuinely be down to the caller's origin.
 function getJson(url) {
   return fetchJson(url).catch(function (e) {
     if (e && e.status && e.status !== 401 && e.status !== 403) throw e;
-    console.warn('[usage] fetch direct echoue (' + ((e && e.message) || e) +
-                 ') : repli sur un onglet claude.ai');
+    console.warn('[usage] direct fetch failed (' + ((e && e.message) || e) +
+                 '): falling back to a claude.ai tab');
     return fetchViaTab(url);
   });
 }
 
-// L'uuid d'organisation ne change jamais en pratique : on le met en cache pour ne pas payer
-// une requete de plus a chaque sondage (le worker meurt entre deux alarmes, un cache memoire
-// ne survivrait pas).
+// The organization uuid never changes in practice: we cache it so as not to pay for
+// one more request on every poll (the worker dies between two alarms, an in-memory cache
+// would not survive).
 function resolveOrg() {
   if (!usageNeedsOrg()) return Promise.resolve(null);
 
@@ -353,7 +353,7 @@ function resolveOrg() {
     if (o.orgId) return o.orgId;
     return getJson(orgsUrl()).then(function (json) {
       var id = pickOrgId(json);
-      if (!id) throw new Error('aucun uuid d\'organisation dans la reponse de ' + orgsUrl());
+      if (!id) throw new Error('no organization uuid in the response from ' + orgsUrl());
       return chrome.storage.local.set({ orgId: id }).then(function () { return id; });
     });
   });
@@ -364,42 +364,42 @@ function pollUsage() {
     .then(function (org) { return getJson(usageUrl(org)); })
     .then(function (json) {
       var data = parseUsage(json);
-      if (!data) return;   // parseUsage a deja dit en console ce qui manque
+      if (!data) return;   // parseUsage has already said in the console what is missing
 
-      // Ecrit a chaque sondage meme si rien n'a bouge : "updatedAt" doit refleter la
-      // fraicheur reelle de la donnee, et usageHistory a besoin d'un echantillonnage regulier.
+      // Written on every poll even if nothing moved: "updatedAt" must reflect the
+      // real freshness of the data, and usageHistory needs regular sampling.
       return chrome.storage.local.set({ usage: { data: data, updatedAt: Date.now() } });
     })
     .catch(function (e) {
-      console.warn('[usage] sondage echoue :', (e && e.message) || e);
-      // Un uuid d'organisation perime rendrait le sondage muet pour toujours : on le jette
-      // pour que le prochain reveil le redemande.
+      console.warn('[usage] polling failed:', (e && e.message) || e);
+      // A stale organization uuid would make the polling mute forever: we discard it
+      // so the next wake-up asks for it again.
       if (e && (e.status === 401 || e.status === 403 || e.status === 404)) {
         return chrome.storage.local.remove('orgId').catch(function () {});
       }
     });
 }
 
-// ---- sondage du statut -------------------------------------------------------
+// ---- status polling ----------------------------------------------------------
 
-// Source totalement independante de l'usage : autre domaine, endpoint public, et rien de
-// commun en storage. Elle ne touche ni l'icone, ni l'historique, ni les notifications.
+// A source totally independent of usage: another domain, a public endpoint, and nothing
+// in common in storage. It touches neither the icon, nor the history, nor the notifications.
 function pollStatus() {
-  // fetchJson() et pas getJson() : le repli sur un onglet claude.ai n'a aucun sens pour un
-  // endpoint public d'un autre domaine, et ses avertissements "[usage]" seraient trompeurs.
+  // fetchJson() and not getJson(): falling back to a claude.ai tab makes no sense for a
+  // public endpoint on another domain, and its "[usage]" warnings would be misleading.
   return fetchJson(STATUS_URL)
     .then(function (json) {
       var data = parseStatus(json);
-      if (!data) return;   // parseStatus a deja dit en console ce qui manque
+      if (!data) return;   // parseStatus has already said in the console what is missing
 
       return chrome.storage.local.set({ status: { data: data, updatedAt: Date.now() } });
     })
     .catch(function (e) {
-      console.warn('[status] sondage echoue :', (e && e.message) || e);
+      console.warn('[status] polling failed:', (e && e.message) || e);
     });
 }
 
-// ---- declencheurs ------------------------------------------------------------
+// ---- triggers ----------------------------------------------------------------
 
 chrome.storage.onChanged.addListener(function (changes, area) {
   if (area !== 'local' || !changes.usage) return;
@@ -407,7 +407,7 @@ chrome.storage.onChanged.addListener(function (changes, area) {
 
   var data = changes.usage.newValue && changes.usage.newValue.data;
   if (!data) return;
-  var prev = changes.usage.oldValue;   // sondage precedent, pour la detection de reset
+  var prev = changes.usage.oldValue;   // previous poll, for reset detection
   chain = chain
     .then(function () { return recordHistory(data); })
     .then(function () { return maybeNotify(data, prev); })
@@ -419,27 +419,27 @@ chrome.alarms.onAlarm.addListener(function (a) {
   if (a.name === STATUS_ALARM) pollStatus();
 });
 
-// Le service worker est detruit et relance en permanence ; ce code de premier niveau
-// rejoue donc a chaque reveil. chrome.alarms.create remet le compte a zero, ce qui
-// repousserait le sondage indefiniment : on ne cree que si l'alarme manque.
+// The service worker is destroyed and restarted constantly; this top-level code
+// therefore replays on every wake-up. chrome.alarms.create resets the count to zero, which
+// would push the polling back indefinitely: we only create if the alarm is missing.
 chrome.alarms.get(ALARM).then(function (a) {
   if (!a) chrome.alarms.create(ALARM, { periodInMinutes: POLL_MINUTES });
-}, function () { /* pas grave */ });
+}, function () { /* harmless */ });
 
 chrome.alarms.get(STATUS_ALARM).then(function (a) {
   if (!a) chrome.alarms.create(STATUS_ALARM, { periodInMinutes: STATUS_POLL_MINUTES });
-}, function () { /* pas grave */ });
+}, function () { /* harmless */ });
 
-// setIcon ne survit pas au redemarrage de Chrome : il faut redessiner au demarrage.
+// setIcon does not survive a Chrome restart: we must redraw at startup.
 chrome.runtime.onStartup.addListener(function () {
   render();
-  pollUsage();   // ne pas attendre la premiere alarme pour avoir une donnee a afficher
+  pollUsage();   // do not wait for the first alarm to have data to display
   pollStatus();
 });
 
 chrome.runtime.onInstalled.addListener(function () {
-  // Cles orphelines : captures de la Phase 1 (sniffer), et "context" d'avant la
-  // segmentation par conversation (remplacee par les cles "ctx:<uuid>").
+  // Orphan keys: Phase 1 captures (sniffer), and "context" from before the
+  // per-conversation segmentation (replaced by the "ctx:<uuid>" keys).
   chrome.storage.local.get(null).then(function (all) {
     var stale = Object.keys(all).filter(function (k) {
       return k.indexOf('sniff:') === 0 || k === 'context';

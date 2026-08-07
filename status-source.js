@@ -1,20 +1,20 @@
-// Seul point d'adaptation a la page de statut publique de Claude. Le reste de l'extension ne
-// depend que de la SORTIE de ce fichier :
+// The only adaptation point to Claude's public status page. The rest of the extension only
+// depends on the OUTPUT of this file:
 //   { level: 'operational'|'degraded'|'outage',
-//     components: [ { name, level, status } ],   // status = valeur brute, pour la console
-//     incident?: { name, impact? } }             // incident en cours, s'il y en a un
-// "status.description" de Statuspage n'est pas repris : il est en anglais et redondant avec
-// "level" ("Minor Service Outage" n'ajoute rien a 'degraded'). Le popup affiche son propre
-// libelle francais.
-// jamais de la forme reelle de la reponse : si Atlassian change de format, il n'y a que ce
-// fichier a corriger. Aucun fetch, aucun chrome.* ici — background.js garde tout l'I/O.
+//     components: [ { name, level, status } ],   // status = raw value, for the console
+//     incident?: { name, impact? } }             // ongoing incident, if there is one
+// Statuspage's "status.description" is not carried over: it is in English and redundant with
+// "level" ("Minor Service Outage" adds nothing to 'degraded'). The popup displays its own
+// French label.
+// never on the actual shape of the response: if Atlassian changes format, only this
+// file needs fixing. No fetch, no chrome.* here — background.js keeps all the I/O.
 //
-// Totalement independant de usage-source.js et de theme.js : aucune donnee, aucune fonction
-// partagee. Charge par importScripts() depuis le service worker.
+// Completely independent of usage-source.js and theme.js: no shared data, no shared
+// function. Loaded by importScripts() from the service worker.
 'use strict';
 
-// GET https://status.claude.com/api/v2/summary.json, CONFIRME par capture le 2026-07-30 (un
-// incident etait actif). C'est du Statuspage (Atlassian). Exemple de reponse reelle :
+// GET https://status.claude.com/api/v2/summary.json, CONFIRMED by capture on 2026-07-30 (an
+// incident was active). This is Statuspage (Atlassian). Sample of a real response:
 //   {
 //     "page": { "id": "tymt9n04zgry", "name": "Claude", ... },
 //     "status": { "indicator": "minor", "description": "Minor Service Outage" },
@@ -31,45 +31,45 @@
 //     "scheduled_maintenances": []
 //   }
 //
-// summary.json et pas status.json : une seule requete donne l'indicateur global, les composants
-// ET les incidents. status.json ne porte que l'indicateur.
+// summary.json and not status.json: a single request gives the overall indicator, the components
+// AND the incidents. status.json only carries the indicator.
 var STATUS_URL = 'https://status.claude.com/api/v2/summary.json';
 
-// ---- normalisation -----------------------------------------------------------
+// ---- normalization -----------------------------------------------------------
 
-// Ordre de gravite, pour retenir le pire etat vu.
+// Severity order, to keep the worst state seen.
 var STATUS_RANK = { operational: 0, degraded: 1, outage: 2 };
 
 function worstLevel(a, b) {
   return STATUS_RANK[b] > STATUS_RANK[a] ? b : a;
 }
 
-// Un mot inconnu — ou un champ "status" absent — donne 'degraded' plutot que 'operational' :
-// pour un afficheur de panne, une fausse alerte qui envoie voir status.claude.com est moins
-// couteuse qu'un "tout va bien" affiche pendant une panne.
+// An unknown word — or a missing "status" field — yields 'degraded' rather than 'operational':
+// for an outage display, a false alarm that sends you to status.claude.com is less
+// costly than an "all is well" shown during an outage.
 function levelFromComponent(status) {
   if (status === 'operational') return 'operational';
   if (status === 'partial_outage' || status === 'major_outage') return 'outage';
-  return 'degraded';   // degraded_performance, under_maintenance, ou valeur inattendue
+  return 'degraded';   // degraded_performance, under_maintenance, or unexpected value
 }
 
 function levelFromIndicator(ind) {
   if (ind === 'none') return 'operational';
   if (ind === 'major' || ind === 'critical') return 'outage';
-  return 'degraded';   // minor, maintenance, ou valeur inattendue
+  return 'degraded';   // minor, maintenance, or unexpected value
 }
 
-// Les 6 composants de la page portent tous "Claude" dans leur nom : ce filtre ne retire rien
-// aujourd'hui, il ne sert qu'a ecarter un composant etranger si Atlassian en ajoute un. Les
-// entrees de groupe (group:true) n'ont pas d'etat propre — aucune sur cette page, garde-fou.
+// The 6 components of the page all carry "Claude" in their name: this filter removes nothing
+// today, it only serves to discard a foreign component if Atlassian adds one. Group
+// entries (group:true) have no state of their own — none on this page, a guard.
 function isClaudeComponent(c) {
   if (!c || c.group === true || typeof c.name !== 'string') return false;
   return c.name.toLowerCase().indexOf('claude') !== -1;
 }
 
-// Premier incident non resolu. summary.json ne liste en principe que ceux-la, mais le test sur
-// resolved_at ne coute qu'une condition. On ne garde que le titre et l'impact : le corps des
-// incident_updates est trop long pour un popup de 260 px, et le lien de la section suffit.
+// First unresolved incident. In principle summary.json only lists those, but the test on
+// resolved_at costs just one condition. We only keep the title and the impact: the body of the
+// incident_updates is too long for a 260 px popup, and the section link is enough.
 function pickIncident(list) {
   if (!Array.isArray(list)) return null;
 
@@ -84,10 +84,10 @@ function pickIncident(list) {
   return null;
 }
 
-// Le niveau global est le PIRE de (indicateur de page, composants retenus), jamais l'indicateur
-// seul : la capture du 2026-07-30 annonce "minor" alors que 4 composants sont en partial_outage
-// et que l'incident est d'impact "major". Suivre l'indicateur aveuglement sous-estimerait la
-// panne.
+// The overall level is the WORST of (page indicator, retained components), never the indicator
+// alone: the 2026-07-30 capture announces "minor" while 4 components are in partial_outage
+// and the incident has "major" impact. Following the indicator blindly would understate the
+// outage.
 function parseStatus(json) {
   if (!json || typeof json !== 'object') return null;
 
@@ -106,8 +106,8 @@ function parseStatus(json) {
   }
 
   if (typeof indicator !== 'string' && !components.length) {
-    console.warn('[status] format de reponse inconnu : adapter parseStatus() dans ' +
-                 'status-source.js. JSON recu :', json);
+    console.warn('[status] unknown response format: adapt parseStatus() in ' +
+                 'status-source.js. JSON received:', json);
     return null;
   }
 

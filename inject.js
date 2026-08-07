@@ -1,21 +1,21 @@
-// Monde MAIN, document_start. Patche fetch pour estimer la taille du contexte : longueur du
-// GET de conversation (base), du payload envoye, et du texte streame en reponse (increments).
-// Tout est transmis au monde isole par postMessage ; ce fichier n'ecrit jamais en storage.
+// MAIN world, document_start. Patches fetch to estimate the context size: length of the
+// conversation GET (baseline), of the sent payload, and of the text streamed in reply (increments).
+// Everything is passed to the isolated world by postMessage; this file never writes to storage.
 //
-// L'usage (5h / 7j) ne passe plus par ici : il est sonde directement par le service worker.
-// L'evenement SSE "message_limit" n'arrivait qu'apres l'envoi d'un message, ce qui rendait la
-// donnee vieille des qu'on ne discutait pas.
+// Usage (5h / 7d) no longer goes through here: it is polled directly by the service worker.
+// The "message_limit" SSE event only arrived after a message was sent, which made the
+// data stale as soon as you were not chatting.
 //
-// REGLE D'OR : ce fichier ne doit jamais casser claude.ai. Tout chemin de capture est dans
-// un try/catch, et la valeur de retour des fonctions patchees ne depend jamais du succes
-// de la capture.
+// GOLDEN RULE: this file must never break claude.ai. Every capture path is in
+// a try/catch, and the return value of the patched functions never depends on the success
+// of the capture.
 (function () {
   'use strict';
 
   if (window.__claudeUsageV1) return;
   try {
     Object.defineProperty(window, '__claudeUsageV1', { value: true });
-  } catch (e) { /* pas grave */ }
+  } catch (e) { /* harmless */ }
 
   var DEBUG = false;
 
@@ -24,17 +24,17 @@
   var SSE_MS_BUDGET = 120000;
   var SSE_LINE_MAX = 64 * 1024;
 
-  // Detection sur la ligne brute. Surtout PAS de contrainte sur un prefixe "data:" : une
-  // donnee SSE peut etre repartie sur plusieurs lignes, arriver avec du padding, ou sans
-  // prefixe du tout.
+  // Detection on the raw line. Definitely NO constraint on a "data:" prefix: an
+  // SSE datum can be spread over several lines, arrive with padding, or with no
+  // prefix at all.
   var DELTA_RE = /"type"\s*:\s*"content_block_delta"/;
 
-  // Teste sur le pathname : l'URL reelle est
+  // Tested on the pathname: the real URL is
   // /api/organizations/<org>/chat_conversations/<uuid>[/completion].
   var COMPLETION_RE = /\/chat_conversations\/([0-9a-f-]{36})\/completion$/i;
   var CONVERSATION_RE = /\/chat_conversations\/([0-9a-f-]{36})$/i;
 
-  // Retourne {what, uuid} pour les deux seules URL qui nous interessent, sinon null.
+  // Returns {what, uuid} for the only two URLs we care about, null otherwise.
   function match(u) {
     try {
       var url = new URL(u, location.href);
@@ -53,13 +53,13 @@
     try {
       msg.__cu = MAGIC;
       window.postMessage(msg, location.origin);
-    } catch (e) { /* pas grave */ }
+    } catch (e) { /* harmless */ }
   }
 
-  // ---- corps de la requete -------------------------------------------------
+  // ---- request body --------------------------------------------------------
 
-  // Doit etre appele AVANT le fetch natif : fetch consomme le corps d'une Request, donc
-  // le clone est obligatoire et doit etre pris avant.
+  // Must be called BEFORE the native fetch: fetch consumes the body of a Request, so
+  // the clone is mandatory and must be taken beforehand.
   function captureRequestBody(input, init, uuid) {
     try {
       var body = init && init.body;
@@ -70,46 +70,46 @@
       if (typeof Request !== 'undefined' && input instanceof Request && input.body) {
         input.clone().text().then(function (text) {
           emit({ kind: 'request', uuid: uuid, chars: text.length });
-        }, function () { /* pas grave */ });
+        }, function () { /* harmless */ });
       }
-    } catch (e) { /* pas grave */ }
+    } catch (e) { /* harmless */ }
   }
 
-  // ---- reponses ------------------------------------------------------------
+  // ---- responses -----------------------------------------------------------
 
   function onResponse(hit, res) {
     if (!res || !res.status || !res.body) return;
 
     var ct = '';
-    try { ct = (res.headers.get('content-type') || '').toLowerCase(); } catch (e) { /* pas grave */ }
+    try { ct = (res.headers.get('content-type') || '').toLowerCase(); } catch (e) { /* harmless */ }
 
     if (hit.what === 'completion') {
       if (ct.indexOf('text/event-stream') === 0) tapEventStream(hit, res);
       return;
     }
 
-    // GET de conversation : c'est la seule reponse qui porte tout l'historique. On ne la
-    // parse pas, sa longueur brute suffit pour une estimation annoncee comme telle.
+    // Conversation GET: this is the only response that carries the whole history. We do not
+    // parse it, its raw length is enough for an estimate advertised as such.
     if (ct.indexOf('application/json') !== 0) return;
     var clone;
     try { clone = res.clone(); } catch (e) { return; }
     clone.text().then(function (text) {
       emit({ kind: 'snapshot', uuid: hit.uuid, chars: text.length });
       if (DEBUG) console.log('[usage] snapshot', hit.uuid, text.length);
-    }, function () { /* pas grave */ });
+    }, function () { /* harmless */ });
   }
 
-  // Tap SSE borne. Aucune E/S dans la boucle de lecture (le tee() cale sa contre-pression
-  // sur la branche la plus lente : un postMessage par delta ferait saccader le rendu de
-  // claude.ai). On accumule, et on n'emet qu'une fois, a la sortie du flux.
+  // Bounded SSE tap. No I/O in the read loop (tee() paces its backpressure
+  // on the slowest branch: one postMessage per delta would make claude.ai's rendering
+  // stutter). We accumulate, and emit only once, on stream exit.
   function tapEventStream(hit, res) {
     var clone, reader;
     try { clone = res.clone(); } catch (e) {
-      if (DEBUG) console.warn('[usage] tap : clone impossible', e);
+      if (DEBUG) console.warn('[usage] tap: clone impossible', e);
       return;
     }
     try { reader = clone.body.getReader(); } catch (e) {
-      if (DEBUG) console.warn('[usage] tap : reader impossible', e);
+      if (DEBUG) console.warn('[usage] tap: reader impossible', e);
       return;
     }
 
@@ -121,11 +121,11 @@
     var carry = '';
     var bytes = 0;
     var replyChars = 0;
-    var lines = 0;      // jalon de diagnostic : "aucun log" doit pouvoir se distinguer de
-                        // "le tap tourne mais ne matche rien"
+    var lines = 0;      // diagnostic marker: "no log" must be distinguishable from
+                        // "the tap is running but matches nothing"
 
-    // Le JSON commence au premier '{' : tolere "data:", "data: ", du padding, ou l'absence
-    // de prefixe. L'offset 5 code en dur de la version precedente n'admettait que "data:".
+    // The JSON starts at the first '{': tolerates "data:", "data: ", padding, or the absence
+    // of a prefix. The hard-coded offset 5 of the previous version only accepted "data:".
     function payloadOf(line) {
       var i = line.indexOf('{');
       return i === -1 ? null : JSON.parse(line.slice(i));
@@ -133,19 +133,19 @@
 
     function onLine(line) {
       lines++;
-      if (line.indexOf('{') === -1) return;   // lignes "event:", commentaires ":", vides
+      if (line.indexOf('{') === -1) return;   // "event:" lines, ":" comments, empty ones
 
       if (DELTA_RE.test(line)) {
         try {
           var d = payloadOf(line).delta;
           var t = d && (d.text || d.thinking);
           if (typeof t === 'string') replyChars += t.length;
-        } catch (e) { /* pas grave : un delta perdu ne fausse l'estimation qu'a la marge */ }
+        } catch (e) { /* harmless: a lost delta only skews the estimate marginally */ }
       }
     }
 
-    // Decoupage en lignes avec report : un evenement a cheval sur deux lectures serait
-    // manque sans ca.
+    // Splitting into lines with carry-over: an event straddling two reads would be
+    // missed without this.
     function feed(text) {
       if (!text) return;
       var parts = (carry + text).split('\n');
@@ -162,14 +162,14 @@
       if (finished) return;
       finished = true;
       try {
-        feed(dec.decode());          // vider le decodeur : sequence multi-octets en attente
+        feed(dec.decode());          // flush the decoder: multi-byte sequence pending
         if (carry) { onLine(carry); carry = ''; }
-      } catch (e) { /* pas grave */ }
+      } catch (e) { /* harmless */ }
 
       emit({ kind: 'reply', uuid: hit.uuid, chars: replyChars });
       if (DEBUG) {
-        console.log('[usage] tap end', end, '| lignes:', lines, '| reponse:', replyChars,
-                    'caracteres');
+        console.log('[usage] tap end', end, '| lines:', lines, '| reply:', replyChars,
+                    'characters');
       }
     }
 
@@ -179,17 +179,17 @@
         try {
           bytes += r.value ? r.value.byteLength : 0;
           feed(dec.decode(r.value, { stream: true }));
-        } catch (e) { /* pas grave */ }
+        } catch (e) { /* harmless */ }
 
         if (bytes > SSE_BYTE_BUDGET || Date.now() > deadline) {
-          try { reader.cancel().catch(function () {}); } catch (e) { /* pas grave */ }
+          try { reader.cancel().catch(function () {}); } catch (e) { /* harmless */ }
           finish('budget');
           return;
         }
         step();
       }, function (e) {
-        // Rejette quand la page annule la requete (bouton Stop) : on emet quand meme ce
-        // qui a deja ete accumule.
+        // Rejects when the page cancels the request (Stop button): we still emit what
+        // has already been accumulated.
         finish(e && e.name === 'AbortError' ? 'abort' : 'error');
       });
     }
@@ -197,7 +197,7 @@
     step();
   }
 
-  // ---- patch fetch ---------------------------------------------------------
+  // ---- fetch patch ---------------------------------------------------------
 
   var nativeFetch = window.fetch;
   if (typeof nativeFetch === 'function') {
@@ -209,37 +209,37 @@
         var method = (isRequest ? input.method : (init && init.method)) || 'GET';
         hit = match(url);
 
-        // Un PUT de renommage repond sur la meme URL que le GET, mais sans les messages :
-        // le prendre pour un snapshot ecraserait l'estimation par une valeur minuscule.
+        // A rename PUT answers on the same URL as the GET, but without the messages:
+        // taking it for a snapshot would overwrite the estimate with a tiny value.
         if (hit && hit.what === 'conversation' && method.toUpperCase() !== 'GET') hit = null;
 
-        // Avant l'appel natif, sinon le corps de la Request est deja consomme.
+        // Before the native call, otherwise the Request body is already consumed.
         if (hit && hit.what === 'completion') captureRequestBody(input, init, hit.uuid);
       } catch (e) { hit = null; }
 
       var p = nativeFetch.apply(this, arguments);
       try {
         if (hit && p && typeof p.then === 'function') {
-          // Le handler de rejet n'est pas optionnel : claude.ai annule des requetes en
-          // permanence (bouton Stop, navigation).
+          // The rejection handler is not optional: claude.ai cancels requests
+          // constantly (Stop button, navigation).
           p.then(function (res) {
-            try { onResponse(hit, res); } catch (e) { /* pas grave */ }
+            try { onResponse(hit, res); } catch (e) { /* harmless */ }
           }, function () {});
         }
-      } catch (e) { /* pas grave */ }
-      return p; // la promesse originale, jamais un wrapper
+      } catch (e) { /* harmless */ }
+      return p; // the original promise, never a wrapper
     };
     try {
       patchedFetch.toString = function () { return 'function fetch() { [native code] }'; };
-    } catch (e) { /* pas grave */ }
+    } catch (e) { /* harmless */ }
     window.fetch = patchedFetch;
   }
 
-  // ---- navigation SPA ------------------------------------------------------
+  // ---- SPA navigation ------------------------------------------------------
 
-  // Chaque monde a son propre History.prototype : patcher pushState depuis le monde isole
-  // n'intercepterait rien, les appels de la page passent par SON prototype. Le patch doit
-  // donc vivre ici, et le changement d'URL est relaye par postMessage.
+  // Each world has its own History.prototype: patching pushState from the isolated world
+  // would intercept nothing, the page's calls go through ITS prototype. The patch must
+  // therefore live here, and the URL change is relayed by postMessage.
   function emitNav() {
     emit({ kind: 'navigation', path: location.pathname });
   }
@@ -248,12 +248,12 @@
     var native = history[name];
     if (typeof native !== 'function') return;
     history[name] = function () {
-      var r = native.apply(this, arguments);   // location est deja a jour au retour
-      try { emitNav(); } catch (e) { /* pas grave */ }
+      var r = native.apply(this, arguments);   // location is already up to date on return
+      try { emitNav(); } catch (e) { /* harmless */ }
       return r;
     };
   });
 
-  // pushState ne couvre pas le retour arriere.
+  // pushState does not cover going back.
   window.addEventListener('popstate', emitNav);
 })();

@@ -1,5 +1,5 @@
-// Test unitaire de usage-source.js. Aucune dependance, aucun framework : coherent avec
-// "JS vanilla, pas de build step". Lance avec : node test-usage-source.js
+// Unit test for usage-source.js. No dependency, no framework: consistent with
+// "vanilla JS, no build step". Run with: node test-usage-source.js
 'use strict';
 
 var assert = require('assert');
@@ -7,9 +7,9 @@ var fs = require('fs');
 var path = require('path');
 var vm = require('vm');
 
-// usage-source.js est charge par importScripts() dans l'extension, pas par require() : pas
-// de module.exports a y ajouter. On l'evalue donc dans son propre contexte, comme le ferait
-// le service worker, et on relit ses "var" de premier niveau sur ce contexte.
+// usage-source.js is loaded by importScripts() in the extension, not by require(): no
+// module.exports to add to it. So we evaluate it in its own context, as the service
+// worker would, and read back its top-level "var" on that context.
 var src = fs.readFileSync(path.join(__dirname, 'usage-source.js'), 'utf8');
 var sandbox = {};
 vm.createContext(sandbox);
@@ -18,7 +18,7 @@ vm.runInContext(src, sandbox);
 var tests = [];
 function test(name, fn) { tests.push({ name: name, fn: fn }); }
 
-// ---- reponse reelle, capturee le 2026-07-29 sur GET /api/organizations/<org>/usage --------
+// ---- real response, captured on 2026-07-29 from GET /api/organizations/<org>/usage --------
 var REAL_RESPONSE = {
   five_hour: { utilization: 76, resets_at: '2026-07-29T10:49:59.074167+00:00' },
   seven_day: { utilization: 43, resets_at: '2026-08-01T10:59:59.074190+00:00' },
@@ -35,36 +35,36 @@ var REAL_RESPONSE = {
   spend: { percent: 0, enabled: false, disabled_reason: 'out_of_credits' }
 };
 
-test('reponse reelle : pourcentages convertis en fraction, pas en 76*100', function () {
+test('real response: percentages converted to a fraction, not to 76*100', function () {
   var out = sandbox.parseUsage(REAL_RESPONSE);
   assert.strictEqual(out.windows['5h'].utilization, 0.76);
   assert.strictEqual(out.windows['7d'].utilization, 0.43);
 });
 
-test('reponse reelle : severity mappee, weekly_scoped ignore', function () {
+test('real response: severity mapped, weekly_scoped ignored', function () {
   var out = sandbox.parseUsage(REAL_RESPONSE);
   assert.strictEqual(out.windows['5h'].status, 'approaching_limit');   // severity "warning"
   assert.strictEqual(out.windows['7d'].status, undefined);             // severity "normal"
-  assert.strictEqual(Object.keys(out.windows).length, 2);              // pas de 3e fenetre
+  assert.strictEqual(Object.keys(out.windows).length, 2);              // no 3rd window
 });
 
-test('reponse reelle : resets_at en secondes Unix, pas la chaine ISO', function () {
+test('real response: resets_at in Unix seconds, not the ISO string', function () {
   var out = sandbox.parseUsage(REAL_RESPONSE);
   assert.strictEqual(typeof out.windows['5h'].resets_at, 'number');
   assert.strictEqual(out.windows['5h'].resets_at, Math.round(Date.parse(REAL_RESPONSE.limits[0].resets_at) / 1000));
 });
 
-test('repli sur five_hour/seven_day quand "limits" est absent', function () {
+test('fallback to five_hour/seven_day when "limits" is missing', function () {
   var out = sandbox.parseUsage({
     five_hour: { utilization: 10, resets_at: '2026-07-29T10:00:00Z' },
     seven_day: { utilization: 20, resets_at: '2026-08-01T10:00:00Z' }
   });
   assert.strictEqual(out.windows['5h'].utilization, 0.1);
   assert.strictEqual(out.windows['7d'].utilization, 0.2);
-  assert.strictEqual(out.windows['5h'].status, undefined);   // pas de severity a la racine
+  assert.strictEqual(out.windows['5h'].status, undefined);   // no severity at the root
 });
 
-test('repli sur five_hour/seven_day quand "limits" est vide', function () {
+test('fallback to five_hour/seven_day when "limits" is empty', function () {
   var out = sandbox.parseUsage({
     five_hour: { utilization: 5, resets_at: '2026-07-29T10:00:00Z' },
     seven_day: { utilization: 6, resets_at: '2026-08-01T10:00:00Z' },
@@ -74,24 +74,24 @@ test('repli sur five_hour/seven_day quand "limits" est vide', function () {
   assert.strictEqual(out.windows['7d'].utilization, 0.06);
 });
 
-test('repli par fenetre quand "limits" ne porte que "session"', function () {
+test('per-window fallback when "limits" only carries "session"', function () {
   var out = sandbox.parseUsage({
     five_hour: { utilization: 1, resets_at: '2026-07-29T10:00:00Z' },
     seven_day: { utilization: 2, resets_at: '2026-08-01T10:00:00Z' },
     limits: [{ kind: 'session', percent: 99, severity: 'warning', resets_at: '2026-07-29T10:00:00Z' }]
   });
-  assert.strictEqual(out.windows['5h'].utilization, 0.99);   // vient de "limits"
-  assert.strictEqual(out.windows['7d'].utilization, 0.02);   // repli sur seven_day
+  assert.strictEqual(out.windows['5h'].utilization, 0.99);   // comes from "limits"
+  assert.strictEqual(out.windows['7d'].utilization, 0.02);   // fallback to seven_day
 });
 
-test('format totalement inconnu : null, pas d\'exception', function () {
+test('completely unknown format: null, not an exception', function () {
   assert.strictEqual(sandbox.parseUsage({ five_hour: { pct: 32 } }), null);
   assert.strictEqual(sandbox.parseUsage(null), null);
   assert.strictEqual(sandbox.parseUsage('oops'), null);
   assert.strictEqual(sandbox.parseUsage({ limits: [{ kind: 'session', percent: 'NaN' }] }), null);
 });
 
-test('severity inconnue : fenetre gardee sans status (pas d\'exception)', function () {
+test('unknown severity: window kept without a status (no exception)', function () {
   var out = sandbox.parseUsage({
     limits: [{ kind: 'session', percent: 50, severity: 'something_new', resets_at: null }]
   });
@@ -100,7 +100,7 @@ test('severity inconnue : fenetre gardee sans status (pas d\'exception)', functi
   assert.strictEqual(out.windows['5h'].resets_at, undefined);
 });
 
-// ---- execution ----------------------------------------------------------------------------
+// ---- run -----------------------------------------------------------------------------------
 var failed = 0;
 tests.forEach(function (t) {
   try {
@@ -113,5 +113,5 @@ tests.forEach(function (t) {
   }
 });
 
-console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passes');
+console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passed');
 if (failed) process.exit(1);

@@ -1,173 +1,173 @@
-# Contexte du projet
+# Project context
 
-Extension Chrome (Manifest V3) personnelle, jamais destinée au Web Store, qui affiche :
-1. L'usage de session (5h) et hebdomadaire (7j) sur claude.ai
-2. Le % de contexte utilisé dans la conversation en cours (feature absente des outils existants)
-3. Le statut de Claude lu sur status.claude.com
+Personal Chrome extension (Manifest V3), never meant for the Web Store, which displays:
+1. Session (5h) and weekly (7d) usage on claude.ai
+2. The % of context used in the current conversation (a feature missing from existing tools)
+3. Claude's status as read from status.claude.com
 
-## État du repo
+## Repo state
 
-Le repo contient l'extension finale. Le sniffer de découverte (Phase 1) n'existe plus en tant
-que tel : il ne reste que le nettoyage de ses clés `sniff:` dans `onInstalled`.
+The repo holds the finished extension. The discovery sniffer (Phase 1) no longer exists as such:
+all that remains is the cleanup of its `sniff:` keys in `onInstalled`.
 
-Note : le repo public de ClaudeKarma (jrlprost/ClaudeKarma et jrlprost/claudekarma_browser)
-est introuvable (404 sur les deux adresses) — pas de code de référence externe disponible.
-Tout vient de notre propre découverte réseau.
+Note: the public ClaudeKarma repo (jrlprost/ClaudeKarma and jrlprost/claudekarma_browser)
+cannot be found (404 at both addresses) — no external reference code available.
+Everything comes from our own network discovery.
 
-Trois sources de données, volontairement séparées :
+Three data sources, deliberately kept separate:
 
-- **Usage (5 h / 7 j)** — sondé toutes les 60 s par le service worker (`chrome.alarms`), écrit
-  dans la clé `usage`. L'extraction depuis l'événement SSE `message_limit` a été **abandonnée** :
-  trop fragile, et la donnée ne bougeait qu'après l'envoi d'un message.
-- **Estimation de contexte** — toujours passive, via le patch `fetch` de `inject.js` (taille du
-  GET de conversation + payloads envoyés + texte streamé). Aucun appel réseau émis.
-- **Statut** — `GET https://status.claude.com/api/v2/summary.json` (Statuspage public, non
-  authentifié) sondé toutes les 5 min par une alarme séparée, écrit dans la clé `status`.
-  `parseStatus()` dans `status-source.js` ne partage rien avec les deux autres sources.
-  Endpoint et forme de réponse **confirmés par capture** le 2026-07-30 — contrairement à
-  `ORGS_PATH`. Deux pièges consignés dans le README : le niveau global est **calculé** (pire de
-  l'indicateur de page et des composants, parce que `status.indicator` s'est révélé sous-estimer
-  une panne réelle), et le filtre sur « claude » dans les noms de composants ne retire rien
-  aujourd'hui (les six le contiennent).
+- **Usage (5 h / 7 d)** — polled every 60 s by the service worker (`chrome.alarms`), written
+  to the `usage` key. Extracting it from the `message_limit` SSE event has been **abandoned**:
+  too fragile, and the data only moved after a message was sent.
+- **Context estimation** — always passive, through the `fetch` patch in `inject.js` (size of the
+  conversation GET + sent payloads + streamed text). No network call is emitted.
+- **Status** — `GET https://status.claude.com/api/v2/summary.json` (public Statuspage,
+  unauthenticated) polled every 5 min by a separate alarm, written to the `status` key.
+  `parseStatus()` in `status-source.js` shares nothing with the other two sources.
+  Endpoint and response shape **confirmed by capture** on 2026-07-30 — unlike
+  `ORGS_PATH`. Two pitfalls recorded in the README: the overall level is **computed** (worst of
+  the page indicator and the components, because `status.indicator` turned out to understate
+  a real outage), and the filter on "claude" in component names removes nothing
+  today (all six contain it).
 
-`USAGE_PATH` (`GET /api/organizations/<org>/usage`) et `parseUsage()` dans `usage-source.js`
-sont **confirmés** par capture réseau — voir le README pour la forme réelle de la réponse et
-le piège d'unité (`utilization`/`percent` en 0-100, pas en fraction 0-1). Testé par
+`USAGE_PATH` (`GET /api/organizations/<org>/usage`) and `parseUsage()` in `usage-source.js`
+are **confirmed** by network capture — see the README for the real response shape and
+the unit pitfall (`utilization`/`percent` in 0-100, not as a 0-1 fraction). Tested by
 `node test-usage-source.js`.
 
-⚠️ **`ORGS_PATH` reste une supposition** : la requête qui liste les organisations n'a jamais
-été capturée — voir la section dédiée du README si le sondage échoue avant même d'atteindre
+Warning: **`ORGS_PATH` remains an assumption**: the request that lists organizations has never
+been captured — see the dedicated README section if polling fails before it even reaches
 `.../usage`.
 
-⚠️ `theme.js` a **deux** entrées `content_scripts`. La seconde vise `https://a.claude.ai/*` avec
-`all_frames: true` : le spinner « plein écran » (gros astérisque isolé) est rendu dans une iframe
-sur ce sous-domaine, où le script n'était jamais injecté — `all_frames` vaut `false` par défaut,
-et c'était ça le blocage, pas le domaine (`https://*.claude.ai/*` le couvrait déjà, y compris
-dans `host_permissions`). Ne pas remplacer ça par un `all_frames: true` sur l'entrée principale :
-ça injecterait aussi le thème dans les autres iframes du site (rendus d'artefacts). L'entrée
-principale porte un `exclude_matches` symétrique pour que les deux jeux restent disjoints —
-modifier l'un sans l'autre provoque une double exécution. C'est la seule entrée du dépôt couplée
-à un nom de domaine précis : si Anthropic le renomme, le spinner cessera **silencieusement** de
-suivre la couleur.
+Warning: `theme.js` has **two** `content_scripts` entries. The second targets `https://a.claude.ai/*` with
+`all_frames: true`: the "fullscreen" spinner (large isolated asterisk) is rendered in an iframe
+on that subdomain, where the script was never injected — `all_frames` defaults to `false`,
+and that was the blocker, not the domain (`https://*.claude.ai/*` already covered it, including
+in `host_permissions`). Do not replace this with an `all_frames: true` on the main entry:
+that would also inject the theme into the site's other iframes (artifact renderings). The main
+entry carries a symmetric `exclude_matches` so the two sets stay disjoint —
+modifying one without the other causes a double execution. It is the only entry in the repo tied
+to a specific domain name: if Anthropic renames it, the spinner will **silently** stop
+following the color.
 
-Quatre fonctionnalités s'ajoutent, indépendantes des trois sources ci-dessus et les unes des
-autres : la **personnalisation du thème** (`theme.js`), l'**auto-continue**
-(`autocontinue-source.js` + `autocontinue.js` + `autocontinue-bg.js`), qui clique le bouton
-« Continue » d'une réponse arrêtée par la limite de tool-use. L'auto-continue exige **deux
-conditions cumulées** (bouton visible ET phrase de limite dans le seul dernier message) et
-n'a qu'un détecteur, `acTick()`, réveillé soit par un `MutationObserver`, soit par le service
-worker — d'où l'impossibilité structurelle du double-clic. Testé par
-`node test-autocontinue.js` (logique pure) et `node test-autocontinue-dom.js` (DOM bouchonné).
+Four features are added on top, independent of the three sources above and of each
+other: **theme customization** (`theme.js`), **auto-continue**
+(`autocontinue-source.js` + `autocontinue.js` + `autocontinue-bg.js`), which clicks the
+"Continue" button of a reply stopped by the tool-use limit. Auto-continue requires **two
+cumulative conditions** (button visible AND limit sentence in the last message only) and
+has a single detector, `acTick()`, woken either by a `MutationObserver` or by the service
+worker — hence the structural impossibility of a double click. Tested by
+`node test-autocontinue.js` (pure logic) and `node test-autocontinue-dom.js` (stubbed DOM).
 
-⚠️ Le contrôle de couleur d'accent du popup est une **palette + un champ hexadécimal**, jamais un
-`<input type="color">` : sur Firefox le sélecteur natif est une fenêtre, et l'ouverture d'une
-fenêtre **ferme le popup ancré** (bug Mozilla 1292701, ouvert depuis 2016) — avant tout
-événement `input`, donc écouter `input` ne rattrape rien, c'était déjà le cas. La règle générale
-est plus large que la couleur : **aucun contrôle ouvrant une fenêtre du système dans le popup**
-(`type="file"` compris). Même interface sur les deux navigateurs, exprès : un reniflage
-d'`userAgent` donnerait deux interfaces à maintenir en parallèle. Testé par
-`node test-popup-accent.js`, détail et options écartées dans le README.
+Warning: the popup's accent color control is a **palette + a hexadecimal field**, never an
+`<input type="color">`: on Firefox the native picker is a window, and opening a
+window **closes the anchored popup** (Mozilla bug 1292701, open since 2016) — before any
+`input` event, so listening for `input` rescues nothing, and that was already the case. The general rule
+is broader than color: **no control that opens a system window inside the popup**
+(`type="file"` included). Same interface on both browsers, on purpose: sniffing
+`userAgent` would mean two interfaces to maintain in parallel. Tested by
+`node test-popup-accent.js`; details and rejected options in the README.
 
-⚠️ Convention à ne pas casser : `autoContinueMaxCount === 0` signifie **illimité**, partout
-(`AC_UNLIMITED`). C'est aussi ce que rend `acSettings()` pour une clé absente ou aberrante, donc
-un réglage non configuré ne bloque jamais. Une comparaison `count >= maxCount` nue bloquerait
-immédiatement à 0 : le court-circuit doit passer **avant**, et `acMaxReached()` est le seul
-endroit du dépôt où cette comparaison a le droit d'exister. Quand l'auto-continue ne clique pas,
-le diagnostic est dans la console du service worker (état de la boucle) puis dans celle de
-l'onglet (bouton, phrase, compteur, décision, et le message réel recopié).
+Warning: a convention not to break: `autoContinueMaxCount === 0` means **unlimited**, everywhere
+(`AC_UNLIMITED`). It is also what `acSettings()` returns for a missing or nonsensical key, so
+an unconfigured setting never blocks. A bare `count >= maxCount` comparison would block
+immediately at 0: the short-circuit must come **first**, and `acMaxReached()` is the only
+place in the repo where that comparison is allowed to exist. When auto-continue does not click,
+the diagnosis is in the service worker console (loop state) then in the tab's
+(button, sentence, counter, decision, and the actual message copied out).
 
-⚠️ Les **dossiers personnalisés** de la sidebar (`folders-source.js` + `folders.js`) sont la
-fonctionnalité **la plus fragile du dépôt** : la seule à manipuler la structure DOM native de
-claude.ai plutôt que des variables CSS ou des données d'API. Elle **déplace** les vrais nœuds
-des conversations (jamais de clone, sinon les clics et menus natifs seraient perdus), s'ancre
-sur `a[href^="/chat/"]` puis `closest('.df-drag-shiftable')`, et se réapplique via un
-`MutationObserver` sur `aside.dframe-sidebar`. **Ne pas re-deviner les sélecteurs** : ils sont
-confirmés par inspection et consignés dans un tableau du README, avec leur fragilité respective.
-Le bouton « − » (retrait en un clic) se pose dans le conteneur de contrôles natif de la ligne,
-atteint par le parent du premier `button` de l'item qui n'est pas le nôtre — surtout pas par
-`aria-label^="Plus d'options pour"`, qui dépend de la langue de l'interface. C'est ce qui lui
-fait hériter du survol sans gérer d'opacité, et il appelle le **même** `cfApplyDrop('', uuid)`
-que le dépôt sur la bande « Retirer » : une seule désassignation, deux entrées. Son clic est
-intercepté sur `window` en **capture**, par délégation sur `.cf-unfile`, et le bouton lui-même ne
-porte **aucun** gestionnaire : en bouillonnement, le premier clic se faisait manger par un
-« avaleur de clic » à usage unique du site — même défaut et même correction que pour le dépôt. Ne
-pas y reposer d'`addEventListener`.
-Ses composants flottants — menu du clic droit, modale de saisie (création et renommage),
-confirmation de suppression — **copient un composant natif précis** de claude.ai : il ne reste
-**aucun** `window.prompt` ni `window.confirm` dans cette fonctionnalité. Saisie et confirmation
-partagent la coque `cfShell()` et rien d'autre (corps, garde-fou et touche Entrée diffèrent) —
-ne pas les refondre en une seule fonction à paramètres optionnels. La confirmation donne le focus
-à **« Annuler »**, pas au bouton rouge : Entrée y referme au lieu de détruire, à l'inverse d'un
-`window.confirm`. Chaque couleur, rayon et
-ombre y passe par `var(--cds-x, <valeur observée>)` : les noms de tokens sont **déduits** de
-leurs classes Tailwind, ce qui n'est acceptable que parce qu'on les **lit** avec un repli — un
-nom erroné retombe sur la valeur observée. Ne pas remplacer ces replis par un token nu, et ne pas
-rebrancher ces composants sur `--cds-radius` / `--cds-shadow-{sm,md,lg}` : ce sont les tokens de
-base, que `theme.js` multiplie déjà, et rien ne confirme qu'ils valent le `rounded-card` /
-`shadow-panel` observés ici. Le mode sombre est couvert par le token du site quand il existe, et
-par un repli `@media (prefers-color-scheme: dark)` sinon.
+Warning: the sidebar's **custom folders** (`folders-source.js` + `folders.js`) are the
+**most fragile feature in the repo**: the only one that manipulates claude.ai's native DOM
+structure rather than CSS variables or API data. It **moves** the real conversation
+nodes (never a clone, otherwise native clicks and menus would be lost), anchors
+on `a[href^="/chat/"]` then `closest('.df-drag-shiftable')`, and reapplies itself through a
+`MutationObserver` on `aside.dframe-sidebar`. **Do not re-guess the selectors**: they are
+confirmed by inspection and recorded in a README table, with their respective fragility.
+The "−" button (one-click removal) is placed in the row's native control container,
+reached through the parent of the item's first `button` that is not ours — definitely not through
+`aria-label^="Plus d'options pour"`, which depends on the interface language. That is what makes it
+inherit the hover state without managing opacity, and it calls the **same** `cfApplyDrop('', uuid)`
+as the drop on the "Retirer" strip: one single unassignment, two entry points. Its click is
+intercepted on `window` in **capture**, by delegation on `.cf-unfile`, and the button itself carries
+**no** handler: on bubbling, the first click was eaten by a
+single-use "click swallower" of the site — same flaw and same fix as for the drop. Do
+not put an `addEventListener` back on it.
+Its floating components — right-click menu, input modal (creation and renaming),
+delete confirmation — **copy a specific native component** of claude.ai: there is
+**no** `window.prompt` or `window.confirm` left in this feature. Input and confirmation
+share the `cfShell()` shell and nothing else (body, guard and Enter key differ) —
+do not merge them into a single function with optional parameters. The confirmation gives focus
+to **"Annuler"**, not to the red button: Enter closes it instead of destroying, unlike a
+`window.confirm`. Every color, radius and
+shadow there goes through `var(--cds-x, <observed value>)`: the token names are **deduced** from
+their Tailwind classes, which is only acceptable because we **read** them with a fallback — a
+wrong name falls back to the observed value. Do not replace those fallbacks with a bare token, and do not
+rewire these components onto `--cds-radius` / `--cds-shadow-{sm,md,lg}`: those are the base
+tokens, which `theme.js` already scales, and nothing confirms they equal the `rounded-card` /
+`shadow-panel` observed here. Dark mode is covered by the site's token when it exists, and
+by a `@media (prefers-color-scheme: dark)` fallback otherwise.
 
-Toute la logique vérifiable vit dans `folders-source.js` (`node test-folders.js`) ; le placement
-DOM a un harnais jsdom optionnel, `node test-folders-dom.js`, qui se saute si jsdom est absent —
-le dépôt reste sans `package.json` ni `node_modules`.
+All the verifiable logic lives in `folders-source.js` (`node test-folders.js`); DOM
+placement has an optional jsdom harness, `node test-folders-dom.js`, which skips itself if jsdom is absent —
+the repo stays free of `package.json` and `node_modules`.
 
-L'**export de conversation** (`export-source.js` + `export.js`) ajoute un bouton à côté de
-« Partager ». Décision de conception à ne pas défaire : **le contenu vient de l'API**
-(`…/chat_conversations/<uuid>`, le même GET que celui intercepté par `inject.js`), jamais du
-DOM — scraper aurait imposé de dérouler toute la conversation, et un export tronqué ne se voit
-pas. Il n'y a **pas de repli DOM**, délibérément. L'uuid d'organisation n'est pas deviné non
-plus : il est relevé dans les URL que la page a réellement appelées
-(`performance.getEntriesByType('resource')`), justement pour ne pas dépendre de `ORGS_PATH`. Le
-PDF passe par `window.print()` dans une iframe hors écran, sans aucune bibliothèque. Testé par
-`node test-export.js` (logique pure) et `node test-export-dom.js` (jsdom optionnel).
+**Conversation export** (`export-source.js` + `export.js`) adds a button next to
+"Partager". A design decision not to undo: **the content comes from the API**
+(`…/chat_conversations/<uuid>`, the same GET that `inject.js` intercepts), never from the
+DOM — scraping would have required scrolling through the whole conversation, and a truncated export does not
+show. There is **no DOM fallback**, deliberately. The organization uuid is not guessed
+either: it is picked up from the URLs the page actually called
+(`performance.getEntriesByType('resource')`), precisely so as not to depend on `ORGS_PATH`. The
+PDF goes through `window.print()` in an offscreen iframe, without any library. Tested by
+`node test-export.js` (pure logic) and `node test-export-dom.js` (optional jsdom).
 
-⚠️ L'ancrage du bouton part de **« Partager »**, pas du slot `div#dframe-header-actions-slot` :
-ce dernier est absent d'au moins un contexte (conversation de Projet), où l'export se
-désactivait à tort. `exAnchor()` cherche « Partager » du plus proche au plus large et place le
-bouton dans *son* parent, quel qu'il soit — donc **ne pas remettre de condition « slot
-obligatoire »**, et ne pas ajouter un sélecteur de conteneur par contexte : c'est justement ce
-que cet ordre évite. Le slot ne sert que de repli, et l'arrêt propre ne subsiste que si les deux
-manquent.
+Warning: the button's anchoring starts from **"Partager"**, not from the `div#dframe-header-actions-slot` slot:
+the latter is absent from at least one context (Project conversation), where export
+wrongly disabled itself. `exAnchor()` looks for "Partager" from nearest to widest and places the
+button in *its* parent, whatever it is — so **do not put back a "slot
+required" condition**, and do not add a per-context container selector: that is exactly
+what this order avoids. The slot only serves as a fallback, and the clean shutdown only survives if both
+are missing.
 
-Le dépôt est **porté sur Firefox** (MV3), avec un **manifest unique** partagé avec Chrome.
-Vérifié en conditions réelles sur Firefox 153 et Chrome 150 ; le détail des mesures, des
-verdicts et des réserves est dans la section « Portage Firefox » du README. Trois pièges
-seulement méritent d'être connus avant de toucher au code :
+The repo is **ported to Firefox** (MV3), with a **single manifest** shared with Chrome.
+Verified under real conditions on Firefox 153 and Chrome 150; the details of the measurements,
+verdicts and reservations are in the "Portage Firefox" section of the README. Only three
+pitfalls are worth knowing before touching the code:
 
-⚠️ `background` porte **deux** clés : `service_worker` (Chrome) et `scripts` (Firefox, qui ne
-supporte pas `service_worker` et instancie une **event page**). Les mêmes six fichiers sont donc
-listés **à deux endroits**, dans le même ordre — le tableau `scripts` du manifest, et les
-`importScripts()` en tête de `background.js`. Rien ne les synchronise : n'en modifier qu'un casse
-**un seul** des deux navigateurs, ce qui en fait une panne asymétrique, facile à ne pas voir.
-`importScripts` n'existant que dans un `WorkerGlobalScope`, il est protégé par
-`if (typeof importScripts === 'function')` — **ne pas retirer ce garde**, c'était le premier
-obstacle réel du portage.
+Warning: `background` carries **two** keys: `service_worker` (Chrome) and `scripts` (Firefox, which does
+not support `service_worker` and instantiates an **event page**). The same six files are therefore
+listed **in two places**, in the same order — the manifest's `scripts` array, and the
+`importScripts()` at the top of `background.js`. Nothing keeps them in sync: modifying only one breaks
+**only one** of the two browsers, which makes it an asymmetric failure, easy to miss.
+Since `importScripts` only exists in a `WorkerGlobalScope`, it is guarded by
+`if (typeof importScripts === 'function')` — **do not remove that guard**, it was the first
+real obstacle of the port.
 
-⚠️ `compat.js` doit être chargé **en premier** dans chaque contexte : tableau `scripts`, chaque
-entrée `content_scripts` **sauf** celle en `world: "MAIN"` (aucune API d'extension n'y existe),
-et `popup.html`. Il aliase `chrome` sur `browser`, et c'est un **filet de sécurité, pas un
-correctif** : sur Firefox 153 `chrome.*` rend déjà des promesses, mais ce comportement n'est
-documenté nulle part. Deux conséquences : après l'alias `chrome.*` **est** `browser.*`, qui est
-promise-only, donc tout appel en **style callback** devient suspect — le dépôt n'en compte qu'un,
-`show()` dans `background.js` ; et le fichier étant évalué **six fois par frame** (une par entrée
-`content_scripts`), il doit rester **strictement idempotent** : aucun compteur, aucun log.
+Warning: `compat.js` must be loaded **first** in every context: the `scripts` array, every
+`content_scripts` entry **except** the one in `world: "MAIN"` (no extension API exists there),
+and `popup.html`. It aliases `chrome` onto `browser`, and it is a **safety net, not a
+fix**: on Firefox 153 `chrome.*` already returns promises, but that behavior is
+documented nowhere. Two consequences: after the alias `chrome.*` **is** `browser.*`, which is
+promise-only, so any call in **callback style** becomes suspect — the repo has only one,
+`show()` in `background.js`; and since the file is evaluated **six times per frame** (once per
+`content_scripts` entry), it must remain **strictly idempotent**: no counter, no log.
 
-⚠️ `strict_min_version: "128.0"` vient de `world: "MAIN"` (Firefox 128+), **pas** du comportement
-de `chrome.*`. Ne pas l'abaisser en croyant qu'il protège les promesses : sous 128, `world` est
-une clé inconnue donc ignorée, `inject.js` atterrit dans le monde isolé, et l'estimation de
-contexte cesse **silencieusement** de fonctionner.
+Warning: `strict_min_version: "128.0"` comes from `world: "MAIN"` (Firefox 128+), **not** from the behavior
+of `chrome.*`. Do not lower it believing it protects the promises: below 128, `world` is
+an unknown key and therefore ignored, `inject.js` lands in the isolated world, and context
+estimation **silently** stops working.
 
-## Contraintes techniques
+## Technical constraints
 
-- Manifest V3 uniquement, JS vanilla, pas de build step — chargeable directement en mode
-  développeur via chrome://extensions, ou via `about:debugging` côté Firefox. **Un seul
-  manifest pour les deux navigateurs** : voir les pièges ci-dessus avant d'y toucher.
-- Toutes les données restent en local (chrome.storage.local) — jamais de serveur tiers. Le
-  réseau émis par l'extension va vers claude.ai (sondage d'usage) et status.claude.com
-  (sondage de statut), rien d'autre.
-- Les endpoints internes de claude.ai ne sont pas garantis stables : le code doit rester
-  simple à corriger si un format de réponse change. D'où `usage-source.js` et
-  `status-source.js`, un point d'adaptation unique par source.
+- Manifest V3 only, vanilla JS, no build step — loadable directly in developer
+  mode through chrome://extensions, or through `about:debugging` on the Firefox side. **A single
+  manifest for both browsers**: see the pitfalls above before touching it.
+- All data stays local (chrome.storage.local) — never a third-party server. The
+  network traffic emitted by the extension goes to claude.ai (usage polling) and status.claude.com
+  (status polling), nothing else.
+- claude.ai's internal endpoints are not guaranteed stable: the code must stay
+  simple to fix if a response format changes. Hence `usage-source.js` and
+  `status-source.js`, a single adaptation point per source.
 
 ---
 

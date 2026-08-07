@@ -1,36 +1,36 @@
-// Seul point d'adaptation « donnees » des dossiers personnalises, et seule brique partagee
-// entre la page et les tests. Logique PURE : aucun DOM, aucun chrome.*, aucun fetch — c'est ce
-// qui la rend testable telle quelle par test-folders.js, avec le meme procede vm.runInContext
-// que usage-source.js et theme.js.
+// The only "data" adaptation point of custom folders, and the only brick shared
+// between the page and the tests. PURE logic: no DOM, no chrome.*, no fetch — that is what
+// makes it testable as-is by test-folders.js, with the same vm.runInContext technique
+// as usage-source.js and theme.js.
 //
-// Tout ce qui touche a la STRUCTURE DOM de la sidebar est dans folders.js, volontairement
-// separe : c'est la partie fragile, celle qui cassera si claude.ai remanie sa sidebar, et elle
-// ne doit pas entrainer la logique de rangement avec elle.
+// Everything touching the sidebar's DOM STRUCTURE is in folders.js, deliberately
+// separate: that is the fragile part, the one that will break if claude.ai reworks its sidebar, and it
+// must not drag the filing logic down with it.
 //
-// Fonctionnalite independante du reste de l'extension : rien de commun avec usage-source.js,
-// status-source.js, theme.js ni autocontinue-source.js.
+// A feature independent of the rest of the extension: nothing in common with usage-source.js,
+// status-source.js, theme.js or autocontinue-source.js.
 'use strict';
 
 var FOLDER_KEYS = ['folders', 'folderAssignments'];
 
-// Palette FIXE : on ne choisit pas une couleur libre, on en pioche une parmi celles-ci. Un
-// selecteur de couleur libre laisserait ecrire du gris sur gris, et la pastille de 8 px n'a de
-// valeur que si les couleurs se distinguent d'un coup d'oeil. La premiere est l'accent de
-// claude.ai (--cds-clay-emphasized).
+// FIXED palette: we do not pick a free color, we pick one from these. A
+// free color picker would allow writing grey on grey, and the 8 px dot only has
+// value if the colors can be told apart at a glance. The first one is claude.ai's
+// accent (--cds-clay-emphasized).
 var FOLDER_COLORS = ['#c6613f', '#e0913a', '#eab308', '#22c55e',
   '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899'];
 
 var FOLDER_NAME_MAX = 40;
 
-// Les identifiants generes sont de la forme "f12", mais le storage est editable a la main : on
-// impose une forme sans guillemet ni crochet, parce que folders.js retrouve ses blocs par un
-// selecteur [data-cf-folder="<id>"]. Un id libre y serait une injection de selecteur.
+// Generated identifiers are of the form "f12", but storage is editable by hand: we
+// impose a form without a quote or a bracket, because folders.js finds its blocks again through a
+// [data-cf-folder="<id>"] selector. A free-form id would be a selector injection there.
 var FOLDER_ID_RE = /^[a-z0-9_-]{1,32}$/i;
 
-// L'uuid de conversation ne s'obtient QUE par le href du lien : la sidebar ne porte aucun
-// data-attribute dedie. Forme uuid exigee explicitement, sinon « /chat/new » passerait pour une
-// conversation. Cherche partout dans la chaine, pas seulement en tete : le href peut etre
-// absolu (https://claude.ai/chat/<uuid>) comme relatif.
+// The conversation uuid can ONLY be obtained from the link's href: the sidebar carries no
+// dedicated data-attribute. The uuid shape is required explicitly, otherwise "/chat/new" would pass for a
+// conversation. Searched anywhere in the string, not only at the start: the href can be
+// absolute (https://claude.ai/chat/<uuid>) as well as relative.
 var FOLDER_CHAT_RE = /\/chat\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
 function folderUuidFromHref(href) {
@@ -40,41 +40,41 @@ function folderUuidFromHref(href) {
   return m ? m[1].toLowerCase() : null;
 }
 
-// ---- normalisation -----------------------------------------------------------
+// ---- normalization -----------------------------------------------------------
 
 function folderCleanName(raw) {
   if (typeof raw !== 'string') return '';
   return raw.replace(/\s+/g, ' ').trim().slice(0, FOLDER_NAME_MAX);
 }
 
-// Une couleur hors palette retombe sur la premiere : le storage est editable a la main depuis
-// la console, et une valeur libre casserait la lisibilite que la palette garantit.
+// A color outside the palette falls back to the first one: storage is editable by hand from
+// the console, and a free value would break the readability the palette guarantees.
 function folderCleanColor(raw) {
   return FOLDER_COLORS.indexOf(raw) === -1 ? FOLDER_COLORS[0] : raw;
 }
 
-// ---- modales -----------------------------------------------------------------
+// ---- modals ------------------------------------------------------------------
 //
-// Les seules decisions des modales (saisie et confirmation) qui ne dependent pas du DOM. Elles
-// vivent ici comme tout ce qui est verifiable ; folders.js n'en garde que l'affichage.
+// The only modal decisions (input and confirmation) that do not depend on the DOM. They
+// live here like everything verifiable; folders.js only keeps their display.
 
-// Un nom qui ne survit pas au nettoyage est refuse. C'est la MEME condition pour la touche
-// Entree et pour le bouton d'action, a la creation comme au renommage : si l'un des trois
-// fermait la modale sans rien ecrire, ca se lirait comme une sauvegarde reussie.
+// A name that does not survive the cleanup is refused. It is the SAME condition for the
+// Enter key and for the action button, on creation as on renaming: if one of the three
+// closed the modal without writing anything, it would read as a successful save.
 function folderNameSubmittable(raw) {
   return folderCleanName(raw) !== '';
 }
 
-// Le corps de la confirmation de suppression. Ici et pas dans folders.js pour la meme raison que
-// le reste : c'est du texte qui depend d'un compte, donc quelque chose qui peut etre faux, donc
-// quelque chose qui se teste.
+// The body of the delete confirmation. Here and not in folders.js for the same reason as
+// the rest: it is text that depends on a count, hence something that can be wrong, hence
+// something testable.
 //
-// La derniere phrase est constante et volontaire : « est-ce que ca supprime mes conversations ? »
-// est LA question qu'on se pose devant un bouton « Supprimer », et une confirmation qui n'y
-// repond pas oblige a aller chercher ailleurs.
+// The last sentence is constant and deliberate: "does this delete my conversations?"
+// is THE question you ask yourself in front of a "Supprimer" button, and a confirmation that does not
+// answer it forces you to look elsewhere.
 function folderDeleteMessage(count) {
-  // « n > 0 » plutot que « || 0 » : ca ramene aussi un compte negatif ou illisible au cas vide,
-  // qui est le seul texte qui reste vrai quoi qu'il arrive.
+  // "n > 0" rather than "|| 0": it also brings a negative or unreadable count back to the empty case,
+  // which is the only text that stays true whatever happens.
   var n = Number(count);
   if (!(n > 0)) n = 0;
 
@@ -87,18 +87,18 @@ function folderDeleteMessage(count) {
   return sort + ' Aucune conversation ne sera supprimée.';
 }
 
-// Ce qu'une touche vaut dans la modale. On n'en intercepte que deux ; tout le reste (saisie,
-// Tab, fleches) est laisse au navigateur. Entree valide parce qu'un champ texte d'une seule
-// ligne n'a rien d'autre a faire de cette touche — la modale native de claude.ai exige un clic,
-// ce qui se defend pour un formulaire et pas pour un nom de dossier.
+// What a key is worth in the modal. We intercept only two; everything else (typing,
+// Tab, arrows) is left to the browser. Enter submits because a single-line text
+// field has nothing else to do with that key — claude.ai's native modal requires a click,
+// which is defensible for a form and not for a folder name.
 function folderDialogKeyAction(key) {
   if (key === 'Escape') return 'cancel';
   if (key === 'Enter') return 'submit';
   return null;
 }
 
-// Une entree sans id ou sans nom exploitable est JETEE, pas reparee : un dossier fantome sans
-// nom serait impossible a viser pour le supprimer.
+// An entry without an id or without a usable name is DISCARDED, not repaired: a ghost folder without
+// a name would be impossible to target for deletion.
 function folderList(stored) {
   var raw = stored && stored.folders;
   if (!Array.isArray(raw)) return [];
@@ -123,9 +123,9 @@ function folderList(stored) {
   return out;
 }
 
-// Les assignations qui pointent vers un dossier disparu sont ignorees a la LECTURE, en plus
-// d'etre nettoyees a la suppression : le storage peut avoir ete edite a la main, ou une
-// suppression avoir ete interrompue entre les deux ecritures.
+// Assignments pointing to a vanished folder are ignored at READ time, on top
+// of being cleaned up at deletion: storage may have been edited by hand, or a
+// deletion may have been interrupted between the two writes.
 function folderAssignmentMap(stored, folders) {
   var raw = stored && stored.folderAssignments;
   if (!raw || typeof raw !== 'object') return {};
@@ -156,12 +156,12 @@ function folderCount(assignments, id) {
   return n;
 }
 
-// ---- dossiers ----------------------------------------------------------------
+// ---- folders -----------------------------------------------------------------
 
-// Identifiants "f1", "f2"… deduits du plus grand existant, et pas Math.random() : la creation
-// reste testable, et le storage relu a la main reste lisible. Le trou laisse par un dossier
-// supprime n'est jamais reutilise tant qu'un id plus grand existe, donc aucune assignation
-// orpheline ne peut se retrouver rattachee au mauvais dossier.
+// Identifiers "f1", "f2"… derived from the largest existing one, and not Math.random(): creation
+// stays testable, and storage reread by hand stays readable. The gap left by a deleted
+// folder is never reused as long as a larger id exists, so no orphan
+// assignment can end up attached to the wrong folder.
 function folderNewId(folders) {
   var max = 0;
   (folders || []).forEach(function (f) {
@@ -171,8 +171,8 @@ function folderNewId(folders) {
   return 'f' + (max + 1);
 }
 
-// Premiere couleur non utilisee : deux dossiers crees a la suite se distinguent sans demander
-// une seconde fois a l'utilisateur. Au-dela de huit, on recycle.
+// First unused color: two folders created in a row are distinguishable without asking
+// the user a second time. Beyond eight, we recycle.
 function folderNextColor(folders) {
   var used = {};
   (folders || []).forEach(function (f) { used[f.color] = true; });
@@ -183,10 +183,10 @@ function folderNextColor(folders) {
   return FOLDER_COLORS[folders.length % FOLDER_COLORS.length];
 }
 
-// Toutes les operations ci-dessous rendent un NOUVEAU tableau (ou une nouvelle map) et ne
-// modifient jamais l'entree : l'appelant ecrit le resultat en storage, et l'etat courant reste
-// celui relu par storage.onChanged. Un nom vide ou un id inconnu rend l'entree telle quelle,
-// sans erreur — annuler un prompt ne doit rien casser.
+// All the operations below return a NEW array (or a new map) and never
+// modify the input: the caller writes the result to storage, and the current state stays
+// the one reread by storage.onChanged. An empty name or an unknown id returns the input as-is,
+// without error — cancelling a prompt must break nothing.
 function folderCreate(folders, name) {
   var clean = folderCleanName(name);
   if (!clean) return folders;
@@ -224,9 +224,9 @@ function folderToggle(folders, id) {
   return f ? folderPatch(folders, id, { collapsed: !f.collapsed }) : folders;
 }
 
-// Supprimer un dossier LIBERE ses conversations : elles redeviennent non assignees et
-// retournent dans « Recents ». La conversation elle-meme n'est jamais touchee — cette
-// extension n'a aucun moyen d'en supprimer une, et ne doit jamais en avoir.
+// Deleting a folder FREES its conversations: they become unassigned again and
+// go back to "Récents". The conversation itself is never touched — this
+// extension has no way of deleting one, and must never have one.
 function folderDelete(folders, assignments, id) {
   return {
     folders: folders.filter(function (f) { return f.id !== id; }),
@@ -234,7 +234,7 @@ function folderDelete(folders, assignments, id) {
   };
 }
 
-// ---- assignations ------------------------------------------------------------
+// ---- assignments -------------------------------------------------------------
 
 function folderAssign(assignments, uuid, id) {
   if (!uuid || !id) return assignments;

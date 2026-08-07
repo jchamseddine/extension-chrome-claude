@@ -1,52 +1,52 @@
-// Monde isole, document_idle. Dossiers personnalises dans la sidebar de claude.ai, sans rapport
-// avec les « Projects » natifs. Fonctionnalite independante du reste de l'extension : ne lit et
-// n'ecrit que les cles "folders" et "folderAssignments", n'emet aucune requete.
+// Isolated world, document_idle. Custom folders in claude.ai's sidebar, unrelated
+// to the native "Projects". A feature independent of the rest of the extension: reads and
+// writes only the "folders" and "folderAssignments" keys, emits no request.
 //
-// ⚠️ C'EST LA FONCTIONNALITE LA PLUS FRAGILE DU DEPOT. Toutes les autres s'appuient sur une
-// donnee (API d'usage, Statuspage) ou sur des variables CSS ; celle-ci est la seule a manipuler
-// la STRUCTURE DOM native du site. Un remaniement de la sidebar la casse. D'ou trois regles :
+// Warning: THIS IS THE MOST FRAGILE FEATURE IN THE REPO. All the others rely on
+// data (usage API, Statuspage) or on CSS variables; this one is the only one that manipulates
+// the site's native DOM STRUCTURE. A sidebar rework breaks it. Hence three rules:
 //
-//   1. Le point d'ancrage est le LIEN, a[href^="/chat/"] — le seul selecteur qui repose sur une
-//      donnee (l'URL de la conversation) et pas sur une classe utilitaire. On remonte ensuite
-//      au wrapper deplacable par closest('.df-drag-shiftable'), ce qui reste vrai meme si des
-//      niveaux intermediaires sont ajoutes ou renommes. Le conteneur d'item
-//      (div.group.relative[class*="rounded-"]) n'est JAMAIS cible : sa classe est un rayon
-//      Tailwind arbitraire.
-//   2. Rien n'est duplique : on DEPLACE les vrais noeuds de claude.ai dans nos blocs. Un clone
-//      perdrait les gestionnaires de clic et le menu contextuel natifs.
-//   3. Structure introuvable = arret propre. On n'insere rien et on le dit une fois en console,
-//      plutot que de bricoler un affichage qui casserait la sidebar native.
+//   1. The anchor point is the LINK, a[href^="/chat/"] — the only selector that rests on
+//      data (the conversation URL) and not on a utility class. We then walk up
+//      to the movable wrapper with closest('.df-drag-shiftable'), which stays true even if
+//      intermediate levels are added or renamed. The item container
+//      (div.group.relative[class*="rounded-"]) is NEVER targeted: its class is an arbitrary
+//      Tailwind radius.
+//   2. Nothing is duplicated: we MOVE claude.ai's real nodes into our blocks. A clone
+//      would lose the native click handlers and context menu.
+//   3. Structure not found = clean stop. We insert nothing and say so once in the console,
+//      rather than cobbling together a display that would break the native sidebar.
 //
-// Pas d'IIFE, prefixe "cf"/"CF_" sur tous les noms de premier niveau : les content scripts de
-// l'extension partagent un seul monde isole par frame (meme contrainte que theme.js et
+// No IIFE, "cf"/"CF_" prefix on all top-level names: the extension's content scripts
+// share a single isolated world per frame (same constraint as theme.js and
 // autocontinue.js).
 'use strict';
 
-// ---- selecteurs --------------------------------------------------------------
-// Confirmes par inspection reelle du DOM. Toute reparation future commence ici — le README en
-// tient le tableau, avec le role de chacun et sa fragilite.
-var CF_ASIDE = 'aside.dframe-sidebar';        // coque de la sidebar, ne bouge pas d'un rendu a l'autre
-var CF_SCROLL = '.dframe-nav-scroll';         // conteneur scrollable — sans lui, on s'arrete
-var CF_SECTIONS = '.dframe-recents-by-mode';  // wrapper des sections, la ou on s'insere
-var CF_LINK = 'a[href^="/chat/"]';            // ancrage principal
-var CF_ITEM = '.df-drag-shiftable';           // wrapper deplacable, atteint par closest()
+// ---- selectors ---------------------------------------------------------------
+// Confirmed by real DOM inspection. Any future repair starts here — the README
+// keeps the table, with each one's role and its fragility.
+var CF_ASIDE = 'aside.dframe-sidebar';        // sidebar shell, does not move from one render to the next
+var CF_SCROLL = '.dframe-nav-scroll';         // scrollable container — without it, we stop
+var CF_SECTIONS = '.dframe-recents-by-mode';  // section wrapper, where we insert ourselves
+var CF_LINK = 'a[href^="/chat/"]';            // main anchor
+var CF_ITEM = '.df-drag-shiftable';           // movable wrapper, reached with closest()
 
 var CF_ROOT_ID = '__claude_folders_root';
 var CF_STYLE_ID = '__claude_folders_style';
-var CF_SLOT = 'data-cf-slot';                 // marque-page laisse a la place d'un item deplace
+var CF_SLOT = 'data-cf-slot';                 // bookmark left in place of a moved item
 var CF_DRAG_TYPE = 'application/x-claude-folder';
 
 var CF_DEBOUNCE_MS = 120;
-var CF_GIVE_UP_MS = 8000;   // delai avant de conclure que la structure a change
+var CF_GIVE_UP_MS = 8000;   // delay before concluding the structure has changed
 
 var cfFolders = [];
 var cfAssign = {};
 var cfObserver = null;
-var cfTarget = null;        // noeud actuellement observe, pour ne pas se reabonner pour rien
+var cfTarget = null;        // node currently observed, so as not to resubscribe for nothing
 var cfTimer = null;
-var cfDragging = null;      // uuid en cours de glissement : dataTransfer.getData() est illisible
-var cfMenuEl = null;        // pendant dragover, seuls les types le sont
-var cfDialogEl = null;      // modale de renommage ouverte, ou null
+var cfDragging = null;      // uuid currently being dragged: dataTransfer.getData() is unreadable
+var cfMenuEl = null;        // during dragover, only the types are
+var cfDialogEl = null;      // rename modal open, or null
 var cfEverFound = false;
 var cfWarned = {};
 
@@ -54,7 +54,7 @@ function cfAlive() {
   try { return !!(chrome.runtime && chrome.runtime.id); } catch (e) { return false; }
 }
 
-// Une meme cause ne doit pas noyer la console a chaque re-rendu de la sidebar.
+// A single cause must not flood the console on every sidebar re-render.
 function cfWarn(key, message) {
   if (cfWarned[key]) return;
   cfWarned[key] = true;
@@ -69,11 +69,11 @@ function cfLoad() {
   return chrome.storage.local.get(FOLDER_KEYS).then(function (o) {
     cfFolders = folderList(o);
     cfAssign = folderAssignmentMap(o, cfFolders);
-  }, function () { /* contexte invalide */ });
+  }, function () { /* invalidated context */ });
 }
 
-// On n'applique jamais un changement directement : on ecrit, et c'est storage.onChanged qui
-// relit puis redessine. Un seul chemin, et les autres onglets suivent au passage.
+// We never apply a change directly: we write, and it is storage.onChanged that
+// rereads then redraws. A single path, and the other tabs follow along.
 function cfSave(patch) {
   if (!cfAlive()) return;
   chrome.storage.local.set(patch).catch(function () {});
@@ -87,26 +87,26 @@ function cfSaveBoth(next) {
 
 // ---- style -------------------------------------------------------------------
 
-// Un seul <style>, injecte une fois. Les couleurs sont volontairement relatives (currentColor,
-// gris semi-transparents) : la sidebar existe en clair et en sombre, et le theme peut en plus
-// avoir ete repeint par theme.js.
+// A single <style>, injected once. The colors are deliberately relative (currentColor,
+// semi-transparent greys): the sidebar exists in light and dark, and the theme may on top of that
+// have been repainted by theme.js.
 function cfStyle() {
   if (document.getElementById(CF_STYLE_ID)) return;
 
   var css = [
     '#' + CF_ROOT_ID + '{display:flex;flex-direction:column;gap:2px;margin-bottom:6px}',
-    // Le bandeau ne porte plus de padding vertical : c'est la hauteur du bouton (24 px, celle du
-    // « … » natif) qui donne desormais celle de la bande, sinon les deux s'additionnaient.
+    // The strip no longer carries vertical padding: it is the button height (24 px, that of the
+    // native "…") that now gives the strip's height, otherwise the two added up.
     '.cf-bar{display:flex;align-items:center;gap:6px;padding:0 8px;font-size:11px;opacity:.6}',
     '.cf-bar-label{flex:1;text-transform:uppercase;letter-spacing:.04em}',
-    // « all:unset » remet display a inline et efface la taille de police : les deux sont donc
-    // reposees APRES, sinon le carre de 24 px n'existe pas et le « + » reste a 11 px.
+    // "all:unset" resets display to inline and clears the font size: both are therefore
+    // set again AFTER, otherwise the 24 px square does not exist and the "+" stays at 11 px.
     '.cf-btn{all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;' +
       'min-width:24px;min-height:24px;flex:none;border-radius:6px;cursor:pointer;' +
       'font-size:15px;line-height:1}',
     '.cf-btn:hover{background:rgba(128,128,128,.22)}',
-    // Meme gabarit que le « … » natif d'a cote, dont il partage le conteneur. Aucune regle
-    // d'opacite ici : elle vient des variants group-hover:/group-focus-within: du site.
+    // Same template as the native "…" next to it, whose container it shares. No opacity
+    // rule here: it comes from the site's group-hover:/group-focus-within: variants.
     '.cf-unfile{all:unset;box-sizing:border-box;display:flex;align-items:center;' +
       'justify-content:center;width:var(--df-row-ctl,24px);height:var(--df-row-ctl,24px);' +
       'flex:none;border-radius:6px;cursor:pointer;font-size:15px;line-height:1}',
@@ -121,20 +121,20 @@ function cfStyle() {
     '.cf-count{font-size:11px;opacity:.55;font-variant-numeric:tabular-nums}',
     '.cf-body{display:flex;flex-direction:column;gap:1px;padding-left:10px}',
     '.cf-body[hidden]{display:none}',
-    // Le conteneur de controles est en position:absolute : il ne POUSSE rien. La seule chose qui
-    // empeche le titre de courir dessous est la place que le lien lui reserve a droite — et le
-    // site la dimensionne pour le SEUL bouton « … ». Notre « − » elargit le conteneur sans que
-    // cette reserve suive : d'ou le titre qui passe sous les deux boutons, dans les dossiers et
-    // nulle part ailleurs (« Recents » n'a rien de plus a loger, et s'affiche bien).
+    // The control container is position:absolute: it PUSHES nothing. The only thing that
+    // prevents the title from running underneath is the space the link reserves for it on the right — and the
+    // site sizes that for the "…" button ALONE. Our "−" widens the container without
+    // that reserve following: hence the title running under both buttons, inside the folders and
+    // nowhere else ("Recents" has nothing more to house, and displays fine).
     //
-    // On rend donc la reserve pour DEUX controles, et seulement dans nos blocs. La troncature est
-    // reposee ici meme si le lien la porte deja : elle est sans effet dans ce cas, mais si le site
-    // masque le debordement par un degrade plutot que par des points de suspension, ce degrade ne
-    // couvre plus la bonne zone une fois le conteneur elargi.
+    // So we make the reserve for TWO controls, and only in our blocks. The truncation is
+    // set again here even if the link already carries it: it has no effect in that case, but if the site
+    // masks the overflow with a gradient rather than an ellipsis, that gradient no longer
+    // covers the right zone once the container is widened.
     //
-    // Volontairement large plutot que juste : trop de reserve tronque le titre un peu tot, ce qui
-    // ne se voit pas ; pas assez le remet sous les boutons, ce qui est le bug. Une seule valeur a
-    // ajuster si le gabarit des controles change.
+    // Deliberately generous rather than exact: too much reserve truncates the title a little early, which
+    // does not show; too little puts it back under the buttons, which is the bug. A single value to
+    // adjust if the controls' template changes.
     '.cf-body a[href^="/chat/"]{box-sizing:border-box;min-width:0;overflow:hidden;' +
       'text-overflow:ellipsis;white-space:nowrap;' +
       'padding-right:calc(2 * var(--df-row-ctl,24px) + 12px)}',
@@ -143,26 +143,26 @@ function cfStyle() {
       'border-radius:8px;font-size:11px;opacity:.75;text-align:center}',
     '.cf-out[hidden]{display:none}',
 
-    // ---- menu contextuel et modale de renommage ----------------------------------
+    // ---- context menu and rename modal -------------------------------------------
     //
-    // Ces deux-la ne sont pas peints en couleurs relatives comme le reste du fichier : ils
-    // COPIENT deux composants natifs precis (le menu « … » d'une conversation, la modale de
-    // renommage d'une conversation), et un composant flottant qui ne ressemble a rien de ce qui
-    // l'entoure se voit immediatement.
+    // These two are not painted in relative colors like the rest of the file: they
+    // COPY two specific native components (a conversation's "…" menu, a conversation's
+    // rename modal), and a floating component that looks like nothing around
+    // it shows immediately.
     //
-    // Chaque valeur passe donc par un token du design system du site AVEC un repli en dur :
-    // var(--cds-x, <valeur observee>). Les noms de tokens sont deduits de leurs classes Tailwind
-    // (bg-surface-3 -> --cds-surface-3) sur le modele de la seule chaine confirmee par
-    // inspection, bg-fill-brand -> --cds-fill-brand. Deduits, donc faillibles — mais un nom
-    // errone ne casse rien : la valeur observee prend le relais. C'est ce qui rend cette
-    // deduction acceptable ici alors qu'elle ne le serait pas pour theme.js, qui lui ECRIT ces
-    // variables (voir le README : « ne pas ajouter de variable au hasard »).
+    // Each value therefore goes through a token of the site's design system WITH a hard-coded fallback:
+    // var(--cds-x, <observed value>). The token names are deduced from their Tailwind classes
+    // (bg-surface-3 -> --cds-surface-3) on the model of the only chain confirmed by
+    // inspection, bg-fill-brand -> --cds-fill-brand. Deduced, hence fallible — but a wrong
+    // name breaks nothing: the observed value takes over. That is what makes this
+    // deduction acceptable here when it would not be for theme.js, which WRITES these
+    // variables (see the README: "do not add a variable at random").
     //
-    // Volontairement PAS --cds-radius ni --cds-shadow-{sm,md,lg}, les seuls tokens que le depot
-    // connaisse deja : ce sont ceux de BASE, et rien ne confirme qu'ils valent le rounded-card /
-    // shadow-panel observes sur ces deux composants-la. Les prendre pour equivalents ferait
-    // diverger notre modale de la modale native qu'elle copie — soit exactement le defaut qu'on
-    // corrige. Ils sont en plus deja multiplies par theme.js pour le reglage « coins/ombres ».
+    // Deliberately NOT --cds-radius or --cds-shadow-{sm,md,lg}, the only tokens the repo
+    // already knows: those are the BASE ones, and nothing confirms they equal the rounded-card /
+    // shadow-panel observed on these two components. Taking them as equivalent would make
+    // our modal diverge from the native modal it copies — that is exactly the flaw we are
+    // fixing. On top of that they are already scaled by theme.js for the "corners/shadows" setting.
     '.cf-menu,.cf-modal{' +
       '--cf-surface:var(--cds-surface-3,#fff);' +
       '--cf-text:var(--cds-text-primary,#0b0b0b);' +
@@ -170,23 +170,23 @@ function cfStyle() {
       '--cf-field:var(--cds-fill-field,rgba(0,0,0,.03));' +
       '--cf-ring:var(--cds-shadow-field-ring,inset 0 0 0 1px rgba(0,0,0,.1));' +
       '--cf-card:var(--cds-radius-card,12px);' +
-      // Le seul rouge du depot. PAS de var(--cds-…) ici : les autres tokens sont deduits de
-      // classes reellement observees sur le composant copie, alors qu'aucun bouton de
-      // suppression du site n'a ete inspecte — deduire un nom sans rien avoir vu serait la
-      // « variable au hasard » que le README interdit. Assez sombre pour porter du blanc a 7:1
-      // dans les deux modes, donc une seule valeur suffit.
+      // The only red in the repo. NO var(--cds-…) here: the other tokens are deduced from
+      // classes actually observed on the copied component, whereas no delete button of the
+      // site has been inspected — deducing a name without having seen anything would be the
+      // "variable at random" the README forbids. Dark enough to carry white at 7:1
+      // in both modes, so a single value is enough.
       '--cf-danger:#b42318;' +
-      // Les trois couches decrites sur les composants natifs : un lisere de 1 px translucide,
-      // puis deux ombres portees d'ampleurs differentes.
+      // The three layers described on the native components: a 1 px translucent border,
+      // then two drop shadows of different magnitudes.
       '--cf-panel:var(--cds-shadow-panel,0 0 0 1px rgba(0,0,0,.05),0 6px 20px rgba(0,0,0,.10),' +
         '0 1px 4px rgba(0,0,0,.06));' +
       '--cf-panel-lg:var(--cds-shadow-panel-lg,0 0 0 1px rgba(0,0,0,.05),' +
         '0 12px 40px rgba(0,0,0,.16),0 2px 8px rgba(0,0,0,.08))}',
 
-    // Les replis en dur, eux, ne suivent aucun theme : si le token du site manque, une modale
-    // blanche s'afficherait en mode sombre. Cette regle ne redefinit QUE la partie repli, la
-    // valeur du site restant prioritaire quand elle existe. Elle suit la preference systeme, pas
-    // le reglage de claude.ai — qu'on n'a aucun moyen fiable de lire : c'est un repli de repli.
+    // The hard-coded fallbacks, for their part, follow no theme: if the site's token is missing, a white
+    // modal would show in dark mode. This rule redefines ONLY the fallback part, the
+    // site's value staying authoritative when it exists. It follows the system preference, not
+    // claude.ai's setting — which we have no reliable way to read: it is a fallback of a fallback.
     '@media (prefers-color-scheme:dark){.cf-menu,.cf-modal{' +
       '--cf-surface:var(--cds-surface-3,#2f2f2c);' +
       '--cf-text:var(--cds-text-primary,#f5f5f4);' +
@@ -198,18 +198,18 @@ function cfStyle() {
       '--cf-panel-lg:var(--cds-shadow-panel-lg,0 0 0 1px rgba(255,255,255,.08),' +
         '0 12px 40px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.35))}}',
 
-    // font-family:inherit et pas une police nommee : le menu est appendu a documentElement, il
-    // herite donc de la police du site — y compris celle que theme.js a pu poser.
+    // font-family:inherit and not a named font: the menu is appended to documentElement, so it
+    // inherits the site's font — including the one theme.js may have set.
     '.cf-menu{position:fixed;z-index:2147483647;min-width:128px;max-width:320px;padding:4px;' +
       'border-radius:var(--cf-card);background:var(--cf-surface);color:var(--cf-text);' +
       'box-shadow:var(--cf-panel);font-family:inherit;font-size:14px;line-height:1.4}',
-    // « all:unset » remet display a inline et efface la taille de police : les deux sont reposees
-    // APRES, comme pour .cf-btn plus haut.
+    // "all:unset" resets display to inline and clears the font size: both are set again
+    // AFTER, as for .cf-btn above.
     '.cf-item{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;' +
       'width:100%;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:14px}',
     '.cf-item:hover,.cf-item:focus-visible{background:var(--cf-hover)}',
-    // 20 px : le gabarit des icones natives. La police de ligatures du site (Anthropicons) n'est
-    // pas repliquee — on garde le trait SVG des autres boutons de l'extension (export.js).
+    // 20 px: the native icons' template. The site's ligature font (Anthropicons) is
+    // not replicated — we keep the SVG stroke of the extension's other buttons (export.js).
     '.cf-item svg{width:20px;height:20px;flex:none;opacity:.75}',
     '.cf-item-label{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.cf-swatches{display:flex;gap:6px;padding:6px 10px}',
@@ -232,13 +232,13 @@ function cfStyle() {
       'justify-content:center;height:36px;padding:0 14px;border-radius:8px;cursor:pointer;' +
       'font-size:14px}',
     '.cf-modal-btn:hover{background:var(--cf-hover)}',
-    // Le bouton primaire est l'INVERSE de la boite, pas une couleur en dur : fond sombre sur
-    // texte clair en mode clair, et l'inverse en mode sombre, sans qu'on ait a nommer un token
-    // de plus ni a savoir dans quel mode on est.
+    // The primary button is the INVERSE of the box, not a hard-coded color: dark background on
+    // light text in light mode, and the opposite in dark mode, without our having to name one
+    // more token or to know which mode we are in.
     '.cf-modal-btn-primary{background:var(--cf-text);color:var(--cf-surface)}',
     '.cf-modal-btn-primary:hover{background:var(--cf-text);opacity:.85}',
-    // Rouge et non « primaire foncé » : une suppression ne doit pas ressembler a un
-    // enregistrement au moment ou on la vise.
+    // Red and not "dark primary": a deletion must not look like a save
+    // at the moment you aim at it.
     '.cf-modal-btn-danger{background:var(--cf-danger);color:#fff}',
     '.cf-modal-btn-danger:hover{background:var(--cf-danger);opacity:.85}',
     '.cf-modal-btn[disabled]{opacity:.4;cursor:default}'
@@ -257,38 +257,38 @@ function cfNode(tag, cls, text) {
   return n;
 }
 
-// ---- glisser-deposer ---------------------------------------------------------
+// ---- drag and drop -----------------------------------------------------------
 //
-// BUG CORRIGE (vu en usage reel) : deposer une conversation sur un dossier custom l'EPINGLAIT
-// dans la section native « Épinglé » au lieu de l'assigner. Les handlers appelaient pourtant
-// deja preventDefault() et stopPropagation() — ce n'etait donc pas la cause. Deux defauts
-// reels, chacun suffisant a reproduire le symptome :
+// FIXED BUG (seen in real use): dropping a conversation on a custom folder PINNED it
+// in the native "Épinglé" section instead of assigning it. The handlers were nevertheless
+// already calling preventDefault() and stopPropagation() — so that was not the cause. Two real
+// flaws, each sufficient to reproduce the symptom:
 //
-//   1. RECONNAISSANCE DU GLISSEMENT. Le test se faisait sur dataTransfer.types. Or le site
-//      pose son propre gestionnaire de dragstart, et une implementation de drag appelle
-//      couramment dataTransfer.clearData() avant d'ecrire SON type — ce qui efface le notre.
-//      Notre dragover ne reconnaissait alors plus rien, donc n'appelait pas preventDefault(),
-//      donc le depot n'etait meme pas AUTORISE sur nos blocs : le navigateur le renvoyait a la
-//      logique du site, qui epinglait. On ne se fie donc plus du tout a dataTransfer pour
-//      IDENTIFIER le glissement — cfDragging, pose au dragstart, fait foi.
+//   1. DRAG RECOGNITION. The test was done on dataTransfer.types. But the site
+//      installs its own dragstart handler, and a drag implementation commonly
+//      calls dataTransfer.clearData() before writing ITS type — which erases ours.
+//      Our dragover then recognized nothing anymore, hence did not call preventDefault(),
+//      hence the drop was not even ALLOWED on our blocks: the browser sent it back to the
+//      site's logic, which pinned. So we no longer rely on dataTransfer at all to
+//      IDENTIFY the drag — cfDragging, set at dragstart, is authoritative.
 //
-//   2. PHASE D'ECOUTE. stopPropagation() en phase de bouillonnement arrive trop tard si le
-//      site ecoute en phase de CAPTURE sur un ancetre : la capture descend du haut, donc son
-//      handler s'executait AVANT le notre. Et nos blocs sont a l'interieur de
-//      .dframe-nav-scroll, donc sous n'importe quel ancetre du site. On intercepte desormais
-//      sur WINDOW en capture : c'est le tout premier point de la trajectoire d'un evenement,
-//      avant tout gestionnaire pose sur un descendant, quel que soit son ordre d'inscription.
+//   2. LISTENING PHASE. stopPropagation() in the bubbling phase comes too late if the
+//      site listens in the CAPTURE phase on an ancestor: capture descends from the top, so its
+//      handler ran BEFORE ours. And our blocks are inside
+//      .dframe-nav-scroll, hence under any ancestor of the site. We now intercept
+//      on WINDOW in capture: it is the very first point of an event's trajectory,
+//      before any handler installed on a descendant, whatever its registration order.
 //
-// Consequence volontaire : plus AUCUN gestionnaire n'est pose sur les elements natifs. On
-// n'agit que si la cible est dans notre sous-arbre ET qu'un glissement de conversation est en
-// cours ; partout ailleurs, l'evenement passe intact et le drag natif (reorganisation,
-// epinglage) fonctionne exactement comme avant.
+// Deliberate consequence: NO handler is installed on the native elements anymore. We
+// act only if the target is in our subtree AND a conversation drag is in
+// progress; everywhere else, the event passes intact and the native drag (reordering,
+// pinning) works exactly as before.
 
-// Marque les zones qui acceptent un depot : valeur = id du dossier, ou '' pour « retirer ».
+// Marks the zones that accept a drop: value = folder id, or '' for "remove".
 var CF_DROP_ATTR = 'data-cf-drop';
 
-// Zone de depot A NOUS sous cette cible, sinon null. Le test « dans notre racine » est ce qui
-// garantit qu'on ne marche jamais sur les plates-bandes du site.
+// A drop zone OF OURS under this target, null otherwise. The "inside our root" test is what
+// guarantees we never tread on the site's turf.
 function cfZoneAt(target) {
   if (!target || typeof target.closest !== 'function') return null;
 
@@ -307,8 +307,8 @@ function cfHighlight(zone) {
   if (zone) zone.classList.add('cf-over');
 }
 
-// La bande « Retirer du dossier » n'a de sens que si la conversation glissee est justement
-// rangee quelque part. Appelee sans argument, elle se contente de cacher la bande.
+// The "Retirer du dossier" strip only makes sense if the dragged conversation is indeed
+// filed somewhere. Called without an argument, it just hides the strip.
 function cfShowOutZone(uuid) {
   var root = document.getElementById(CF_ROOT_ID);
   var out = root && root.querySelector('.cf-out');
@@ -318,8 +318,8 @@ function cfShowOutZone(uuid) {
   out.hidden = !(id && cfAssign[id]);
 }
 
-// dataTransfer ne sert plus qu'a RECUPERER l'uuid, et seulement en secours : cfDragging est la
-// source sure, puisqu'il survit a un clearData() du site.
+// dataTransfer now only serves to RETRIEVE the uuid, and only as a backup: cfDragging is the
+// reliable source, since it survives a clearData() by the site.
 function cfDroppedUuid(e) {
   if (cfDragging) return cfDragging;
 
@@ -335,9 +335,9 @@ function cfApplyDrop(folderId, uuid) {
   });
 }
 
-// On ne pose PAS draggable="true" : un <a href> l'est nativement. On n'ajoute que notre type de
-// donnee, sans preventDefault, pour que le systeme de glissement du site continue de recevoir
-// ce qu'il attend quand le depot ne nous concerne pas.
+// We do NOT set draggable="true": an <a href> is natively. We only add our data
+// type, without preventDefault, so the site's drag system keeps receiving
+// what it expects when the drop does not concern us.
 function cfBindDrag(link, uuid) {
   if (link.__cfDrag) return;
   link.__cfDrag = true;
@@ -345,7 +345,7 @@ function cfBindDrag(link, uuid) {
   link.addEventListener('dragstart', function (e) {
     cfDragging = uuid;
     cfShowOutZone();
-    try { e.dataTransfer.setData(CF_DRAG_TYPE, uuid); } catch (err) { /* pas grave */ }
+    try { e.dataTransfer.setData(CF_DRAG_TYPE, uuid); } catch (err) { /* harmless */ }
   });
   link.addEventListener('dragend', function () {
     cfDragging = null;
@@ -354,22 +354,22 @@ function cfBindDrag(link, uuid) {
   });
 }
 
-// ---- bouton « − » (retirer du dossier) ---------------------------------------
+// ---- "−" button (remove from folder) -----------------------------------------
 //
-// Le glisser-deposer sort deja une conversation d'un dossier (bande « Retirer »), mais c'est un
-// geste ; ce bouton est l'equivalent en un clic. Il ne double PAS la logique : il appelle le
-// meme cfApplyDrop('', uuid) que le depot sur la bande.
+// Drag and drop already takes a conversation out of a folder ("Retirer" strip), but that is a
+// gesture; this button is the one-click equivalent. It does NOT duplicate the logic: it calls the
+// same cfApplyDrop('', uuid) as the drop on the strip.
 //
-// Il est insere DANS le conteneur de controles natif de l'item — celui qui porte deja le bouton
-// « … » — et pas a cote : ce conteneur est cache au repos et revele par les variants
-// group-hover:/group-focus-within: poses par le site sur l'item. En s'y installant, le bouton
-// herite exactement du meme comportement d'apparition, sans qu'on gere une seule opacite.
+// It is inserted INSIDE the item's native control container — the one that already carries the
+// "…" button — and not next to it: that container is hidden at rest and revealed by the
+// group-hover:/group-focus-within: variants the site puts on the item. By settling there, the button
+// inherits exactly the same appearance behavior, without our managing a single opacity.
 //
-// Ce conteneur est atteint par le PARENT du premier bouton de l'item qui n'est pas le notre.
-// Viser l'aria-label du « … » (« Plus d'options pour… ») dependrait de la langue de l'interface,
-// et ses classes sont utilitaires : ni l'un ni l'autre ne sont des ancrages acceptables ici.
+// That container is reached through the PARENT of the item's first button that is not ours.
+// Targeting the "…" aria-label ("Plus d'options pour…") would depend on the interface language,
+// and its classes are utility ones: neither is an acceptable anchor here.
 //
-// Le bouton ne porte AUCUN gestionnaire : le clic est intercepte sur window en capture, plus bas.
+// The button carries NO handler: the click is intercepted on window in capture, further down.
 function cfCtlBar(item) {
   var buttons = item.querySelectorAll('button');
   for (var i = 0; i < buttons.length; i++) {
@@ -378,20 +378,20 @@ function cfCtlBar(item) {
   return null;
 }
 
-// N'est pose QUE sur les items ranges dans un dossier : un item de « Recents » n'a pas de
-// dossier a quitter. Conteneur introuvable = on n'insere rien et on le dit une fois, plutot que
-// de coller le bouton ailleurs dans l'item, ou il serait visible en permanence.
+// Placed ONLY on items filed in a folder: an item from "Recents" has no
+// folder to leave. Container not found = we insert nothing and say so once, rather than
+// sticking the button elsewhere in the item, where it would be permanently visible.
 function cfAddUnfile(item, link) {
   var bar = cfCtlBar(item);
   if (!bar) {
-    cfWarn('ctl', 'aucun bouton natif dans l\'item de conversation : le bouton « − » de retrait ' +
-      'n\'est pas inséré. Le retrait par glisser-déposer sur la bande « Retirer du dossier » ' +
-      'reste disponible. Voir le tableau des sélecteurs du README.');
+    cfWarn('ctl', 'no native button in the conversation item: the "−" removal button ' +
+      'is not inserted. Removal by drag and drop onto the "Retirer du dossier" strip ' +
+      'stays available. See the selector table in the README.');
     return;
   }
   if (bar.querySelector('.cf-unfile')) return;
 
-  var btn = cfNode('button', 'cf-unfile', '−');   // U+2212, pas un trait d'union
+  var btn = cfNode('button', 'cf-unfile', '−');   // U+2212, not a hyphen
   btn.type = 'button';
 
   var title = (link.textContent || '').replace(/\s+/g, ' ').trim();
@@ -402,44 +402,44 @@ function cfAddUnfile(item, link) {
   bar.insertBefore(btn, bar.firstChild);
 }
 
-// Les items sont DEPLACES, jamais reconstruits : celui qui revient dans « Recents » emporterait
-// notre bouton avec lui si on ne le retirait pas ici.
+// The items are MOVED, never rebuilt: the one going back to "Recents" would take
+// our button with it if we did not remove it here.
 function cfDropUnfile(item) {
   var btn = item.querySelector('.cf-unfile');
   if (btn) btn.remove();
 }
 
-// BUG CORRIGE (vu en usage reel) : le PREMIER clic sur « − » ne faisait rien, le suivant — et tous
-// les suivants — marchait, sans rechargement de la page.
+// FIXED BUG (seen in real use): the FIRST click on "−" did nothing, the next one — and all
+// the ones after — worked, without reloading the page.
 //
-// Le gestionnaire etait pose sur le bouton, donc en phase de BOUILLONNEMENT. Il suffit qu'un
-// gestionnaire du site pose en CAPTURE sur un ancetre appelle stopPropagation() pour que le clic
-// n'atteigne JAMAIS le bouton : la capture descend depuis window, elle passe donc avant. Et une
-// bibliotheque de glissement arme couramment un « avaleur de clic » A USAGE UNIQUE en fin de geste,
-// pour que le clic qui suit un glissement ne declenche rien — d'ou « le premier clic seulement,
-// puis plus jamais ». Notre propre repli pointeur y contribue : il prive le site de son pointerup
-// et lui envoie un Échap pour qu'il annule, ce qui est justement une fin de geste.
+// The handler was installed on the button, hence in the BUBBLING phase. It only takes a
+// site handler installed in CAPTURE on an ancestor calling stopPropagation() for the click
+// to NEVER reach the button: capture descends from window, so it goes first. And a
+// drag library commonly arms a SINGLE-USE "click swallower" at the end of a gesture,
+// so that the click following a drag triggers nothing — hence "the first click only,
+// then never again". Our own pointer fallback contributes to it: it deprives the site of its pointerup
+// and sends it an Escape so it cancels, which is precisely an end of gesture.
 //
-// C'est le defaut n° 2 du bug d'epinglage (voir plus haut), au meme endroit du fichier et corrige
-// de la meme facon : interception sur WINDOW en capture, le tout premier point de la trajectoire.
-// Notre content script s'inscrit au chargement de la page, donc avant tout avaleur arme plus tard
-// par un geste.
+// This is flaw no. 2 of the pinning bug (see above), at the same place in the file and fixed
+// the same way: interception on WINDOW in capture, the very first point of the trajectory.
+// Our content script registers at page load, hence before any swallower armed later
+// by a gesture.
 //
-// La delegation regle au passage le cycle de vie : le bouton est detruit et recree a chaque
-// re-rendu de la sidebar, et plus aucun exemplaire ne porte de gestionnaire a (re)brancher.
+// Delegation settles the lifecycle along the way: the button is destroyed and recreated on every
+// sidebar re-render, and no instance carries a handler to (re)wire anymore.
 function cfOnUnfileClick(e) {
   if (!e.target || typeof e.target.closest !== 'function') return;
 
   var btn = e.target.closest('.cf-unfile');
   if (!btn) return;
 
-  // Le bouton est un frere du lien, pas un descendant : le clic ne navigue pas de lui-meme. On le
-  // neutralise quand meme, pour qu'il n'atteigne aucun gestionnaire de ligne du site.
+  // The button is a sibling of the link, not a descendant: the click does not navigate by itself. We
+  // neutralize it anyway, so it reaches no row handler of the site.
   e.preventDefault();
   e.stopPropagation();
 
-  // L'uuid est relu dans le DOM plutot que garde dans une fermeture : c'est la meme regle que
-  // partout ailleurs — il ne s'obtient que par le href du lien — et il n'y a plus de fermeture.
+  // The uuid is reread from the DOM rather than kept in a closure: it is the same rule as
+  // everywhere else — it can only be obtained from the link's href — and there is no closure anymore.
   var item = btn.closest(CF_ITEM);
   var link = item && item.querySelector(CF_LINK);
   if (link) cfApplyDrop('', folderUuidFromHref(link.getAttribute('href')));
@@ -447,19 +447,19 @@ function cfOnUnfileClick(e) {
 
 window.addEventListener('click', cfOnUnfileClick, true);
 
-// ---- interception (window, phase de capture) ---------------------------------
+// ---- interception (window, capture phase) ------------------------------------
 
 function cfOnDragOver(e) {
-  if (!cfDragging) return;   // pas un glissement de conversation : on ne touche a rien
+  if (!cfDragging) return;   // not a conversation drag: we touch nothing
 
   var zone = cfZoneAt(e.target);
   if (!zone) { cfHighlight(null); return; }
 
-  // preventDefault sur dragover est ce qui AUTORISE le depot : sans lui, le navigateur refuse
-  // la cible et le glissement retombe sur la logique du site.
+  // preventDefault on dragover is what ALLOWS the drop: without it, the browser refuses
+  // the target and the drag falls back to the site's logic.
   e.preventDefault();
   e.stopPropagation();
-  try { e.dataTransfer.dropEffect = 'move'; } catch (err) { /* pas grave */ }
+  try { e.dataTransfer.dropEffect = 'move'; } catch (err) { /* harmless */ }
   cfHighlight(zone);
 }
 
@@ -480,14 +480,14 @@ function cfOnDrop(e) {
 });
 window.addEventListener('drop', cfOnDrop, true);
 
-// ---- repli pointeur ----------------------------------------------------------
+// ---- pointer fallback --------------------------------------------------------
 //
-// « df-drag-shiftable » suggere un glissement au POINTEUR (les items s'ecartent au survol),
-// pas le drag-and-drop HTML5. Dans ce cas aucun dragstart/dragover/drop n'est emis et tout ce
-// qui precede reste muet. Ce repli ne s'arme donc QUE si aucun dragstart n'a ete vu pour le
-// geste en cours (cfDragging est reste nul) : les deux voies ne peuvent pas se declencher
-// ensemble, et c'est le navigateur qui choisit, pas nous.
-var CF_POINTER_SLOP = 6;   // en deca, c'est un clic, pas un glissement
+// "df-drag-shiftable" suggests a POINTER drag (the items move apart on hover),
+// not HTML5 drag-and-drop. In that case no dragstart/dragover/drop is emitted and everything
+// above stays silent. This fallback therefore arms itself ONLY if no dragstart has been seen for the
+// current gesture (cfDragging stayed null): the two paths cannot fire
+// together, and it is the browser that chooses, not us.
+var CF_POINTER_SLOP = 6;   // below that, it is a click, not a drag
 var cfPointer = null;
 
 function cfOnPointerDown(e) {
@@ -515,41 +515,41 @@ function cfOnPointerUp(e) {
   cfHighlight(null);
   cfShowOutZone();
 
-  if (!drag || !drag.moved || cfDragging) return;   // clic simple, ou voie HTML5 deja active
+  if (!drag || !drag.moved || cfDragging) return;   // plain click, or HTML5 path already active
 
   var zone = cfZoneAt(document.elementFromPoint(e.clientX, e.clientY));
-  if (!zone) return;   // relache ailleurs : le site fait ce qu'il veut, y compris epingler
+  if (!zone) return;   // released elsewhere: the site does what it wants, including pinning
 
   e.preventDefault();
   e.stopPropagation();
   cfApplyDrop(zone.getAttribute(CF_DROP_ATTR), drag.uuid);
 
-  // On vient de priver le site de son pointerup : sans ca son glissement resterait suspendu.
-  // Échap est la sortie conventionnelle des bibliotheques de drag pour annuler proprement.
+  // We have just deprived the site of its pointerup: without this its drag would stay suspended.
+  // Escape is the conventional exit of drag libraries to cancel cleanly.
   try {
     document.dispatchEvent(new KeyboardEvent('keydown', {
       key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true
     }));
-  } catch (err) { /* pas grave */ }
+  } catch (err) { /* harmless */ }
 }
 
 window.addEventListener('pointerdown', cfOnPointerDown, true);
 window.addEventListener('pointermove', cfOnPointerMove, true);
 window.addEventListener('pointerup', cfOnPointerUp, true);
 
-// ---- modales -----------------------------------------------------------------
+// ---- modals ------------------------------------------------------------------
 //
-// Remplacent window.prompt (creation, renommage) et window.confirm (suppression). Ces trois-la
-// sont des composants du NAVIGATEUR : ils s'affichent en haut de la fenetre, loin du dossier
-// qu'on vient de viser, et ne suivent ni le theme de claude.ai ni celui pose par theme.js. Nos
-// modales copient celles du site — meme boite centree, meme fond assombri, memes deux boutons.
+// Replace window.prompt (creation, renaming) and window.confirm (deletion). Those three
+// are BROWSER components: they show at the top of the window, far from the folder
+// you have just targeted, and follow neither claude.ai's theme nor the one set by theme.js. Our
+// modals copy the site's ones — same centred box, same dimmed backdrop, same two buttons.
 //
-// Une SAISIE et une CONFIRMATION partagent la coque (overlay, boite, titre, barre de boutons,
-// Échap, clic sur le fond, frappes retenues) et rien d'autre : corps different, garde-fou
-// different, touche Entree differente. D'ou deux fonctions minces sur une coque commune, plutot
-// qu'une seule a parametres optionnels — qui serait plus longue a lire que les deux reunies.
+// An INPUT and a CONFIRMATION share the shell (overlay, box, title, button bar,
+// Escape, click on the backdrop, keystrokes held back) and nothing else: different body, different
+// guard, different Enter key. Hence two thin functions over a common shell, rather
+// than a single one with optional parameters — which would be longer to read than the two combined.
 //
-// Independantes du reste : elles ne connaissent que folders-source.js, comme tout ce fichier.
+// Independent of the rest: they know only folders-source.js, like this whole file.
 
 function cfCloseDialog() {
   if (cfDialogEl && cfDialogEl.parentNode) cfDialogEl.parentNode.removeChild(cfDialogEl);
@@ -562,9 +562,9 @@ function cfModalBtn(label, variant) {
   return btn;
 }
 
-// La coque ne sait rien de ce qu'elle contient : l'appelant fournit le corps (champ ou message)
-// et son bouton d'action deja cable. Elle n'ajoute que « Annuler » et les trois facons de fermer
-// sans agir — bouton, Échap, clic sur le fond.
+// The shell knows nothing of what it contains: the caller supplies the body (field or message)
+// and its already-wired action button. It only adds « Annuler » and the three ways to close
+// without acting — button, Escape, click on the backdrop.
 function cfShell(title, body, action) {
   cfCloseDialog();
 
@@ -576,19 +576,19 @@ function cfShell(title, body, action) {
   var cancel = cfModalBtn('Annuler');
   cancel.addEventListener('click', cfCloseDialog);
 
-  // Le fond assombri, et seulement lui : un clic dans la boite ne ferme rien.
+  // The dimmed backdrop, and only it: a click inside the box closes nothing.
   overlay.addEventListener('mousedown', function (e) {
     if (e.target === overlay) cfCloseDialog();
   });
 
-  // Aucune frappe faite dans la modale ne doit atteindre le site : claude.ai ecoute le clavier
-  // sur le document pour ses propres raccourcis, et une lettre tapee ici n'a rien a y faire.
-  // C'est la meme preoccupation que le reste du fichier, dans l'autre sens — ici on retient nos
-  // evenements plutot que d'intercepter les siens, donc le bouillonnement suffit : ils partent
-  // de la boite, ils passent forcement par l'overlay avant d'en sortir.
+  // No keystroke made in the modal must reach the site: claude.ai listens to the keyboard
+  // on the document for its own shortcuts, and a letter typed here has no business there.
+  // It is the same concern as the rest of the file, in the other direction — here we hold back our
+  // events rather than intercept its ones, so bubbling is enough: they start
+  // from the box, they necessarily pass through the overlay before leaving it.
   //
-  // La coque ne traite qu'Échap : c'est la seule touche qui veut dire la meme chose dans les
-  // deux modales. Entree n'appartient qu'a la saisie, qui la branche elle-meme sur son champ.
+  // The shell only handles Escape: it is the only key that means the same thing in both
+  // modals. Enter belongs only to the input, which wires it onto its own field.
   ['keydown', 'keyup', 'keypress'].forEach(function (name) {
     overlay.addEventListener(name, function (e) {
       e.stopPropagation();
@@ -612,25 +612,25 @@ function cfShell(title, body, action) {
   return cancel;
 }
 
-// Saisie d'un nom : creation (champ vide) comme renommage (champ pre-rempli).
+// Entering a name: creation (empty field) as well as renaming (pre-filled field).
 function cfDialog(title, value, actionLabel, onSave) {
   var input = document.createElement('input');
   input.type = 'text';
   input.className = 'cf-modal-input';
   input.value = value;
   input.setAttribute('aria-label', title);
-  // Le nettoyage coupe deja a cette longueur : la borner ici evite de saisir un texte qui
-  // disparaitrait silencieusement a l'enregistrement.
+  // The cleanup already cuts at this length: bounding it here avoids typing text that
+  // would silently disappear on save.
   input.maxLength = FOLDER_NAME_MAX;
 
   var save = cfModalBtn(actionLabel, 'cf-modal-btn-primary');
 
-  // Le bouton grise et la touche Entree posent la MEME question, une seule fois ecrite.
+  // The greyed-out button and the Enter key ask the SAME question, written once.
   function sync() { save.disabled = !folderNameSubmittable(input.value); }
 
-  // Un champ vide ne ferme pas la modale : la refermer sans rien ecrire se lirait comme une
-  // sauvegarde reussie. On ferme AVANT d'appeler onSave, pour que l'ecriture en storage et le
-  // redessin qu'elle declenche ne trouvent plus la modale ouverte.
+  // An empty field does not close the modal: closing it without writing anything would read as a
+  // successful save. We close BEFORE calling onSave, so that the storage write and the
+  // redraw it triggers no longer find the modal open.
   function commit() {
     if (!folderNameSubmittable(input.value)) return;
     var name = input.value;
@@ -649,15 +649,15 @@ function cfDialog(title, value, actionLabel, onSave) {
   cfShell(title, input, save);
   sync();
   input.focus();
-  input.select();   // pre-selectionne : au renommage, retaper suffit a remplacer le nom
+  input.select();   // pre-selected: when renaming, retyping is enough to replace the name
 }
 
-// Confirmation d'une action destructrice : pas de champ, donc rien a valider et aucun bouton
-// jamais grise — le garde-fou n'est pas dans la saisie, il est dans le geste demande.
+// Confirmation of a destructive action: no field, hence nothing to validate and no button
+// ever greyed out — the guard is not in the input, it is in the gesture asked for.
 //
-// C'est « Annuler » qui prend le focus, pas le bouton rouge : Entree et Échap referment donc
-// tous deux sans rien detruire, et confirmer demande un geste explicite. L'inverse d'un
-// window.confirm, dont la touche Entree valide.
+// It is « Annuler » that takes the focus, not the red button: Enter and Escape therefore both
+// close without destroying anything, and confirming requires an explicit gesture. The opposite of a
+// window.confirm, whose Enter key confirms.
 function cfConfirm(title, message, actionLabel, onConfirm) {
   var act = cfModalBtn(actionLabel, 'cf-modal-btn-danger');
   act.addEventListener('click', function () {
@@ -668,16 +668,16 @@ function cfConfirm(title, message, actionLabel, onConfirm) {
   cfShell(title, cfNode('div', 'cf-modal-message', message), act).focus();
 }
 
-// ---- menu contextuel ---------------------------------------------------------
+// ---- context menu ------------------------------------------------------------
 
 function cfCloseMenu() {
   if (cfMenuEl && cfMenuEl.parentNode) cfMenuEl.parentNode.removeChild(cfMenuEl);
   cfMenuEl = null;
 }
 
-// Icone au trait, comme celles d'export.js : les icones natives du menu passent par une police
-// de ligatures proprietaire (Anthropicons), qu'on ne cherche pas a repliquer. Seuls le
-// conteneur et la mise en forme du texte copient le natif.
+// Stroke icon, like those of export.js: the menu's native icons go through a proprietary
+// ligature font (Anthropicons), which we do not try to replicate. Only the
+// container and the text formatting copy the native one.
 function cfIcon(d) {
   var ns = 'http://www.w3.org/2000/svg';
   var svg = document.createElementNS(ns, 'svg');
@@ -695,8 +695,8 @@ function cfIcon(d) {
   return svg;
 }
 
-// Structure de l'item natif : une icone de gabarit fixe, puis un libelle qui prend la place
-// restante et se tronque. Le raccourci clavier du troisieme span n'a pas d'equivalent chez nous.
+// Structure of the native item: an icon of fixed template, then a label that takes the remaining
+// space and truncates. The keyboard shortcut of the third span has no equivalent on our side.
 function cfItem(label, d) {
   var btn = cfNode('button', 'cf-item');
   btn.type = 'button';
@@ -706,8 +706,8 @@ function cfItem(label, d) {
   return btn;
 }
 
-// Crayon et corbeille au trait. Le rayon d'arc du crayon (3) couvre la corde de 5,66 : en
-// dessous, le navigateur redimensionne les rayons lui-meme et l'arc se deforme.
+// Pencil and bin, stroked. The pencil's arc radius (3) covers the chord of 5.66: below
+// that, the browser resizes the radii itself and the arc distorts.
 var CF_ICON_RENAME = 'M4 20h4L19 9a3 3 0 10-4-4L4 16v4z';
 var CF_ICON_DELETE = 'M4 7h16M10 7V5a1 1 0 011-1h2a1 1 0 011 1v2M6 7v12a1 1 0 001 1h10a1 1 0 001-1V7';
 
@@ -749,7 +749,7 @@ function cfMenu(folder, x, y) {
   });
   menu.appendChild(del);
 
-  // Position fixe, puis on la corrige si le menu deborde en bas ou a droite.
+  // Fixed position, then corrected if the menu overflows at the bottom or on the right.
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
   document.documentElement.appendChild(menu);
@@ -769,7 +769,7 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') cfCloseMenu();
 }, true);
 
-// ---- blocs de dossiers -------------------------------------------------------
+// ---- folder blocks -----------------------------------------------------------
 
 function cfBlock(root, folder) {
   var block = root.querySelector('[data-cf-folder="' + folder.id + '"]');
@@ -796,9 +796,9 @@ function cfBlock(root, folder) {
     var body = cfNode('div', 'cf-body');
     body.setAttribute('data-cf-body', folder.id);
 
-    // Deposer sur l'en-tete OU dans le corps range dans ce dossier — viser une bande de 4 px
-    // quand le dossier est vide serait injouable. L'interception vit sur window (voir plus
-    // haut) : ces attributs sont tout ce qu'elle a besoin de trouver.
+    // Dropping on the header OR in the body files into this folder — aiming at a 4 px strip
+    // when the folder is empty would be unplayable. The interception lives on window (see
+    // above): these attributes are all it needs to find.
     head.setAttribute(CF_DROP_ATTR, folder.id);
     body.setAttribute(CF_DROP_ATTR, folder.id);
 
@@ -831,8 +831,8 @@ function cfRoot(parent) {
     var add = cfNode('button', 'cf-btn', '+');
     add.title = 'Nouveau dossier';
     add.addEventListener('click', function () {
-      // Champ vide, et non un nom par defaut : un « Dossier 1 » pre-rempli serait valide d'un
-      // Entree distrait, et il faudrait ensuite le renommer.
+      // Empty field, and not a default name: a pre-filled « Dossier 1 » would be confirmed by an
+      // absent-minded Enter, and would then have to be renamed.
       cfDialog('Nouveau dossier', '', 'Créer', function (name) {
         cfSaveFolders(folderCreate(cfFolders, name));
       });
@@ -840,34 +840,34 @@ function cfRoot(parent) {
     bar.appendChild(add);
     root.appendChild(bar);
 
-    // Sortir une conversation d'un dossier se fait sur CETTE bande, a nous, et plus par un
-    // depot sur la section « Récents » native. Poser un gestionnaire sur un element du site
-    // etait precisement ce qui pouvait declencher son epinglage : desormais aucun element
-    // natif ne porte quoi que ce soit de notre part. Elle n'apparait que pendant le
-    // glissement d'une conversation deja rangee — sinon elle n'aurait aucun sens.
+    // Taking a conversation out of a folder happens on THIS strip, ours, and no longer by a
+    // drop on the native « Récents » section. Installing a handler on a site element
+    // was precisely what could trigger its pinning: from now on no native
+    // element carries anything of ours. It only appears while
+    // dragging a conversation already filed — otherwise it would make no sense.
     var out = cfNode('div', 'cf-out', 'Retirer du dossier');
     out.setAttribute(CF_DROP_ATTR, '');
     out.hidden = true;
     root.appendChild(out);
   }
 
-  // Au-dessus des sections natives, et remis en tete si un re-rendu a insere quelque chose
-  // avant nous.
+  // Above the native sections, and put back at the top if a re-render inserted something
+  // before us.
   if (root.parentNode !== parent || parent.firstChild !== root) {
     parent.insertBefore(root, parent.firstChild);
   }
   return root;
 }
 
-// ---- deplacement des items ---------------------------------------------------
+// ---- moving the items --------------------------------------------------------
 
-// Marque-page laisse a la place exacte d'un item range dans un dossier. C'est ce qui permet de
-// le remettre a SA place chronologique quand on l'en sort, et pas simplement a la fin de
-// « Recents ». Un re-rendu du site les detruit avec le reste, ce qui n'est pas un probleme :
-// apres un re-rendu, les items non assignes sont deja au bon endroit.
+// Bookmark left at the exact place of an item filed into a folder. That is what allows
+// putting it back in ITS chronological place when it is taken out, and not simply at the end of
+// "Recents". A site re-render destroys them along with the rest, which is not a problem:
+// after a re-render, the unassigned items are already in the right place.
 function cfLeaveSlot(item, uuid) {
-  // Un re-rendu du site peut avoir remis l'item dans « Recents » sans detruire le marque-page
-  // precedent : on ne garde jamais qu'un seul marque-page par conversation.
+  // A site re-render may have put the item back into "Recents" without destroying the previous
+  // bookmark: we never keep more than one bookmark per conversation.
   var old = document.querySelector('[' + CF_SLOT + '="' + uuid + '"]');
   if (old && old.parentNode) old.parentNode.removeChild(old);
 
@@ -886,9 +886,9 @@ function cfReturnToSlot(item, uuid, fallback) {
   if (fallback) fallback.appendChild(item);
 }
 
-// Section native = le parent d'un item qui n'est PAS dans un de nos blocs. Deduite du DOM au
-// lieu d'etre ciblee par sa classe (group/section) : une classe Tailwind echappee est
-// exactement le genre de selecteur qu'on veut eviter.
+// Native section = the parent of an item that is NOT in one of our blocks. Deduced from the DOM
+// instead of being targeted by its class (group/section): an escaped Tailwind class is
+// exactly the kind of selector we want to avoid.
 function cfNativeSection(scroll, root) {
   var items = scroll.querySelectorAll(CF_ITEM);
   for (var i = 0; i < items.length; i++) {
@@ -897,19 +897,19 @@ function cfNativeSection(scroll, root) {
   return null;
 }
 
-// ---- rendu -------------------------------------------------------------------
+// ---- render ------------------------------------------------------------------
 
 function cfReflow() {
   if (!cfAlive()) return;
 
   var scroll = document.querySelector(CF_SCROLL);
-  if (!scroll) return;   // sidebar pas encore rendue, ou page sans sidebar : pas une erreur
+  if (!scroll) return;   // sidebar not rendered yet, or page without a sidebar: not an error
   cfEverFound = true;
 
   var parent = scroll.querySelector(CF_SECTIONS);
   if (!parent) {
-    cfWarn('sections', 'wrapper « ' + CF_SECTIONS + ' » introuvable : les dossiers sont ' +
-      'inseres directement dans « ' + CF_SCROLL +' ». Vérifier le tableau des sélecteurs du README.');
+    cfWarn('sections', 'wrapper "' + CF_SECTIONS + '" not found: the folders are ' +
+      'inserted directly into "' + CF_SCROLL +'". Check the selector table in the README.');
     parent = scroll;
   }
 
@@ -919,22 +919,22 @@ function cfReflow() {
   var bodies = {};
   cfFolders.forEach(function (f) { bodies[f.id] = cfBlock(root, f); });
 
-  // Sert uniquement de destination de repli quand un marque-page a disparu : plus aucun
-  // gestionnaire n'est pose dessus.
+  // Only serves as a fallback destination when a bookmark has vanished: no handler
+  // is installed on it anymore.
   var section = cfNativeSection(scroll, root);
 
-  // querySelectorAll rend les liens dans l'ordre du document, donc ceux deja ranges d'abord
-  // (nos blocs sont en tete) puis ceux de « Recents » : l'ordre interne d'un dossier est stable
-  // d'un passage a l'autre.
+  // querySelectorAll returns the links in document order, hence the already-filed ones first
+  // (our blocks are at the top) then those of "Recents": the internal order of a folder is stable
+  // from one pass to the next.
   Array.prototype.forEach.call(scroll.querySelectorAll(CF_LINK), function (link) {
     var uuid = folderUuidFromHref(link.getAttribute('href'));
     if (!uuid) return;
 
     var item = link.closest(CF_ITEM);
     if (!item) {
-      cfWarn('item', 'aucun « ' + CF_ITEM + ' » au-dessus du lien de conversation : la sidebar ' +
-        'a change de structure, les dossiers ne rangent plus rien. Voir le tableau des ' +
-        'sélecteurs du README.');
+      cfWarn('item', 'no "' + CF_ITEM + '" above the conversation link: the sidebar ' +
+        'has changed structure, the folders no longer file anything. See the selector ' +
+        'table in the README.');
       return;
     }
 
@@ -944,11 +944,11 @@ function cfReflow() {
     var inFolder = root.contains(item);
 
     if (target) {
-      // Avant le retour anticipe : un item deja a sa place a pu perdre son bouton dans un
-      // re-rendu du site, qui reconstruit ses controles sans toucher a notre placement.
+      // Before the early return: an item already in its place may have lost its button in a
+      // site re-render, which rebuilds its controls without touching our placement.
       cfAddUnfile(item, link);
       if (item.parentNode === target) return;
-      if (!inFolder) cfLeaveSlot(item, uuid);   // premier depart : on marque sa place
+      if (!inFolder) cfLeaveSlot(item, uuid);   // first departure: we mark its place
       target.appendChild(item);
     } else {
       cfDropUnfile(item);
@@ -956,10 +956,10 @@ function cfReflow() {
     }
   });
 
-  // APRES la boucle, jamais avant : un bloc dont le dossier vient d'etre supprime contient
-  // encore ses items a l'entree de cfReflow(). Le supprimer d'abord les arracherait du document
-  // — les conversations disparaitraient de la sidebar jusqu'au prochain re-rendu du site.
-  // folderDelete() ayant libere leurs assignations, la boucle vient de les rendre a « Recents ».
+  // AFTER the loop, never before: a block whose folder has just been deleted still contains
+  // its items when cfReflow() is entered. Removing it first would tear them out of the document
+  // — the conversations would disappear from the sidebar until the next site re-render.
+  // Since folderDelete() has freed their assignments, the loop has just returned them to "Recents".
   Array.prototype.forEach.call(root.querySelectorAll('[data-cf-folder]'), function (block) {
     if (!bodies[block.getAttribute('data-cf-folder')]) block.remove();
   });
@@ -967,12 +967,12 @@ function cfReflow() {
 
 // ---- observation -------------------------------------------------------------
 
-// La sidebar se re-rend a chaque navigation (SPA) et peut charger des conversations plus
-// anciennes au scroll : un scan unique au chargement ne tiendrait pas. On observe donc la
-// coque, qui survit aux re-rendus, plutot que le conteneur scrollable, qui peut etre remplace.
+// The sidebar re-renders on every navigation (SPA) and can load older conversations
+// on scroll: a single scan at load time would not hold. So we observe the
+// shell, which survives the re-renders, rather than the scrollable container, which can be replaced.
 //
-// takeRecords() en fin de passe jette les mutations que cfReflow() vient elle-meme de
-// provoquer — sans quoi chaque rendu en declencherait un autre, indefiniment.
+// takeRecords() at the end of a pass discards the mutations cfReflow() has itself just
+// caused — without which each render would trigger another, indefinitely.
 function cfSchedule() {
   clearTimeout(cfTimer);
   cfTimer = setTimeout(function () {
@@ -982,10 +982,10 @@ function cfSchedule() {
   }, CF_DEBOUNCE_MS);
 }
 
-// Tant que la coque n'existe pas, on se rabat sur documentElement — c'est cher, mais c'est le
-// seul moyen de voir la sidebar apparaitre. Des qu'elle est la on RESSERRE dessus : sans ca on
-// observerait tout le document en permanence, y compris le flux d'une reponse en cours.
-// Reevalue a chaque passe, ce qui rattrape aussi le cas ou la coque serait remplacee.
+// As long as the shell does not exist, we fall back on documentElement — it is expensive, but it is the
+// only way to see the sidebar appear. As soon as it is there we NARROW onto it: without that we
+// would observe the whole document permanently, including the stream of a reply in progress.
+// Re-evaluated on every pass, which also catches the case where the shell would be replaced.
 function cfWatch() {
   var target = document.querySelector(CF_ASIDE) || document.documentElement;
   if (!target || target === cfTarget) return;
@@ -1006,16 +1006,16 @@ cfLoad().then(function () {
   cfWatch();
   cfReflow();
 
-  // Si la structure attendue n'est jamais apparue, on le dit UNE fois, explicitement : c'est le
-  // premier message a chercher le jour ou claude.ai remanie sa sidebar.
+  // If the expected structure never appeared, we say so ONCE, explicitly: it is the
+  // first message to look for the day claude.ai reworks its sidebar.
   //
-  // Mais SEULEMENT si la coque existe : une page de connexion n'a pas de sidebar du tout, et
-  // s'en plaindre serait crier au loup. Coque presente + conteneur absent = vraie anomalie.
+  // But ONLY if the shell exists: a login page has no sidebar at all, and
+  // complaining about it would be crying wolf. Shell present + container absent = a real anomaly.
   setTimeout(function () {
     if (cfEverFound || !document.querySelector(CF_ASIDE)) return;
-    cfWarn('scroll', 'conteneur « ' + CF_SCROLL + ' » introuvable après ' +
-      (CF_GIVE_UP_MS / 1000) + ' s : les dossiers personnalisés sont désactivés et rien n\'a ' +
-      'été inséré. La sidebar de claude.ai a probablement changé — voir le tableau des ' +
-      'sélecteurs dans le README.');
+    cfWarn('scroll', 'container "' + CF_SCROLL + '" not found after ' +
+      (CF_GIVE_UP_MS / 1000) + ' s: custom folders are disabled and nothing was ' +
+      'inserted. claude.ai\'s sidebar has probably changed — see the selector ' +
+      'table in the README.');
   }, CF_GIVE_UP_MS);
 });

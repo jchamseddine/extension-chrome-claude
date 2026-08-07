@@ -1,22 +1,22 @@
-// Seul point d'adaptation de l'export, et seule brique partagee entre la page et les tests.
-// Logique PURE : aucun DOM, aucun chrome.*, aucun fetch — c'est ce qui la rend testable telle
-// quelle par test-export.js, avec le meme procede vm.runInContext que usage-source.js.
+// The only adaptation point of the export, and the only brick shared between the page and the tests.
+// PURE logic: no DOM, no chrome.*, no fetch — that is what makes it testable
+// as-is by test-export.js, with the same vm.runInContext technique as usage-source.js.
 //
-// Fonctionnalite independante du reste de l'extension : rien de commun avec usage-source.js,
-// status-source.js, theme.js, autocontinue-source.js ni folders-source.js.
+// A feature independent of the rest of the extension: nothing in common with usage-source.js,
+// status-source.js, theme.js, autocontinue-source.js or folders-source.js.
 'use strict';
 
-// ---- localisation de la conversation -----------------------------------------
+// ---- locating the conversation -----------------------------------------------
 
-// L'URL reelle est /api/organizations/<org>/chat_conversations/<uuid>, CONFIRMEE par la capture
-// qui a servi a l'estimation de contexte (voir l'en-tete de inject.js). C'est la SEULE reponse
-// qui porte tout l'historique : elle evite le scraping du DOM, qui ne verrait que la portion
-// chargee et obligerait a derouler toute la conversation avant d'exporter.
+// The real URL is /api/organizations/<org>/chat_conversations/<uuid>, CONFIRMED by the capture
+// that served the context estimation (see the header of inject.js). It is the ONLY response
+// that carries the whole history: it avoids DOM scraping, which would only see the loaded
+// portion and would force scrolling through the whole conversation before exporting.
 //
-// L'uuid d'organisation, lui, n'est pas devinable : ORGS_PATH est justement la seule
-// supposition non verifiee du depot, et en dependre couplerait l'export au sondage d'usage. On
-// le releve donc dans les URL que la PAGE a deja appelees (Resource Timing) : la valeur vient
-// d'une requete reellement emise, pas d'un chemin suppose.
+// The organization uuid, on the other hand, is not guessable: ORGS_PATH is precisely the only
+// unverified assumption of the repo, and depending on it would couple the export to usage polling. So
+// we collect it from the URLs the PAGE has already called (Resource Timing): the value comes
+// from a request actually emitted, not from an assumed path.
 var EXPORT_ORG_RE = /\/organizations\/([0-9a-f-]{36})\//i;
 var EXPORT_CONV_RE = /\/chat_conversations\/([0-9a-f-]{36})(?:$|[?#])/i;
 var EXPORT_CHAT_RE = /^\/chat\/([0-9a-f-]{36})/i;
@@ -28,13 +28,13 @@ function exportUuidFromPath(path) {
   return m ? m[1].toLowerCase() : null;
 }
 
-// Deux niveaux, du plus sur au moins sur :
-//   1. l'URL EXACTE que la page a utilisee pour cette conversation — query string comprise,
-//      donc on herite des parametres du site sans avoir a les connaitre ;
-//   2. a defaut, reconstruite a partir de n'importe quelle URL portant l'organisation. Le site
-//      en appelle en permanence, donc l'org se trouve meme si le GET de conversation est sorti
-//      du tampon de Resource Timing (250 entrees par defaut).
-// Aucun des deux ne devine quoi que ce soit : les deux lisent une URL reellement emise.
+// Two levels, from the most reliable to the least:
+//   1. the EXACT URL the page used for this conversation — query string included,
+//      so we inherit the site's parameters without having to know them;
+//   2. failing that, rebuilt from any URL carrying the organization. The site
+//      calls some constantly, so the org is found even if the conversation GET has left
+//      the Resource Timing buffer (250 entries by default).
+// Neither of the two guesses anything: both read a URL actually emitted.
 function exportFindConversationUrl(urls, uuid) {
   if (!uuid || !Array.isArray(urls)) return null;
 
@@ -55,12 +55,12 @@ function exportFindConversationUrl(urls, uuid) {
   return org ? 'https://claude.ai/api/organizations/' + org + '/chat_conversations/' + uuid : null;
 }
 
-// ---- lecture de la reponse ---------------------------------------------------
+// ---- reading the response ----------------------------------------------------
 
-// La FORME de cette reponse n'a jamais ete capturee : inject.js n'en lit que la longueur brute.
-// On accepte donc les deux conventions plausibles (sender/role, text/content[]) plutot que d'en
-// parier une seule, et on le dit en console si rien ne correspond — meme traitement que
-// parseUsage() et parseStatus(). C'est ici, et nulle part ailleurs, qu'il faudra corriger.
+// The SHAPE of this response has never been captured: inject.js only reads its raw length.
+// We therefore accept both plausible conventions (sender/role, text/content[]) rather than
+// betting on a single one, and we say so in the console if nothing matches — same treatment as
+// parseUsage() and parseStatus(). It is here, and nowhere else, that a fix will be needed.
 function exportRole(m) {
   var raw = m.sender || m.role;
   if (raw === 'assistant') return 'assistant';
@@ -68,8 +68,8 @@ function exportRole(m) {
   return null;
 }
 
-// Les blocs qui ne sont pas du texte (tool_use, tool_result, thinking) sont ECARTES : un export
-// doit se lire comme la conversation, pas comme sa trace d'execution.
+// Blocks that are not text (tool_use, tool_result, thinking) are DISCARDED: an export
+// must read like the conversation, not like its execution trace.
 function exportMessageText(m) {
   if (typeof m.text === 'string' && m.text.trim()) return m.text.trim();
 
@@ -92,8 +92,8 @@ function parseConversation(json) {
           : null;
 
   if (!raw) {
-    console.warn('[export] format de réponse inconnu : adapter parseConversation() dans ' +
-                 'export-source.js. JSON reçu :', json);
+    console.warn('[export] unknown response format: adapt parseConversation() in ' +
+                 'export-source.js. JSON received:', json);
     return null;
   }
 
@@ -102,7 +102,7 @@ function parseConversation(json) {
     if (!m || typeof m !== 'object') return;
     var role = exportRole(m);
     var text = exportMessageText(m);
-    if (!role || !text) return;   // message vide ou role inconnu : on ne l'invente pas
+    if (!role || !text) return;   // empty message or unknown role: we do not invent it
     messages.push({ role: role, text: text });
   });
 
@@ -113,13 +113,13 @@ function parseConversation(json) {
   return { title: title, messages: messages };
 }
 
-// ---- nom de fichier ----------------------------------------------------------
+// ---- file name ---------------------------------------------------------------
 
 var EXPORT_FALLBACK_NAME = 'conversation';
 var EXPORT_NAME_MAX = 80;
 
-// Noms de peripheriques DOS, toujours refuses par Windows meme avec une extension : une
-// conversation intitulee « CON » produirait un telechargement impossible a enregistrer.
+// DOS device names, always refused by Windows even with an extension: a
+// conversation titled "CON" would produce a download impossible to save.
 var EXPORT_RESERVED_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 
 function exportPad(n) { return (n < 10 ? '0' : '') + n; }
@@ -128,9 +128,9 @@ function exportStamp(date) {
   return date.getFullYear() + '-' + exportPad(date.getMonth() + 1) + '-' + exportPad(date.getDate());
 }
 
-// Nettoyage volontairement severe : on vise un nom valide sur Windows, macOS et Linux a la
-// fois, donc on retire l'union de leurs interdits — <>:"/\|?* , les caracteres de controle, et
-// les points ou espaces en fin de nom, que l'explorateur Windows tronque silencieusement.
+// Deliberately severe cleanup: we aim for a name valid on Windows, macOS and Linux at
+// once, so we strip the union of their forbidden characters — <>:"/\|?* , control characters, and
+// the dots or spaces at the end of a name, which Windows Explorer truncates silently.
 function exportFileName(title, date, ext) {
   var name = (typeof title === 'string' ? title : '')
     .replace(/[\x00-\x1f\x7f]/g, ' ')
@@ -149,10 +149,10 @@ function exportFileName(title, date, ext) {
 
 var EXPORT_ROLE_LABEL = { user: 'Vous', assistant: 'Claude' };
 
-// Le texte des messages est repris VERBATIM. C'est deliberé : les reponses de Claude SONT du
-// markdown, blocs de code et langages compris — les reecrire ne pourrait que les abimer. Seul
-// le titre est assaini, parce qu'il devient une ligne « # … » et qu'un retour a la ligne dedans
-// casserait la structure du document.
+// The message text is taken VERBATIM. This is deliberate: Claude's replies ARE
+// markdown, code blocks and languages included — rewriting them could only damage them. Only
+// the title is sanitized, because it becomes a "# …" line and a line break inside it
+// would break the document structure.
 function exportCleanTitle(title) {
   var t = (typeof title === 'string' ? title : '').replace(/\s+/g, ' ').trim();
   return t || 'Conversation';
@@ -174,7 +174,7 @@ function exportMarkdown(conv, date) {
   return out.join('\n');
 }
 
-// ---- HTML (pour le PDF) ------------------------------------------------------
+// ---- HTML (for the PDF) ------------------------------------------------------
 
 function exportEscapeHtml(s) {
   return String(s)
@@ -184,15 +184,15 @@ function exportEscapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-// Seuls http(s) sont acceptes : un lien « javascript: » venu du contenu d'une conversation ne
-// doit pas devenir cliquable dans le document imprime.
+// Only http(s) are accepted: a "javascript:" link coming from a conversation's content must
+// not become clickable in the printed document.
 function exportSafeUrl(u) {
   return /^https?:\/\//i.test(u) ? u : null;
 }
 
-// Le formatage en ligne s'applique HORS des portions entre backticks, sinon un `**` cite dans
-// du code deviendrait du gras. L'echappement HTML passe TOUJOURS en premier : le contenu d'une
-// conversation peut contenir « <script> », qui ne doit jamais redevenir une balise.
+// Inline formatting applies OUTSIDE the backtick portions, otherwise a `**` quoted in
+// code would become bold. HTML escaping ALWAYS comes first: a conversation's content
+// can contain "<script>", which must never become a tag again.
 function exportInline(text) {
   return text.split(/(`[^`\n]+`)/).map(function (part, i) {
     if (i % 2 === 1) return '<code>' + exportEscapeHtml(part.slice(1, -1)) + '</code>';
@@ -207,10 +207,10 @@ function exportInline(text) {
   }).join('');
 }
 
-// Rendu markdown volontairement partiel : blocs de code (avec leur langage), titres, listes,
-// citations, paragraphes. Pas de tableaux ni de notes — ca couvre ce qu'on lit dans une
-// conversation, et ca evite d'embarquer un analyseur markdown complet pour un bouton
-// d'impression. Ce qui n'est pas reconnu ressort en paragraphe, jamais perdu.
+// Deliberately partial markdown rendering: code blocks (with their language), headings, lists,
+// quotes, paragraphs. No tables or footnotes — it covers what one reads in a
+// conversation, and it avoids embedding a full markdown parser for a print
+// button. What is not recognized comes out as a paragraph, never lost.
 function exportRenderMarkdown(text) {
   var lines = String(text).split('\n');
   var out = [];
@@ -228,7 +228,7 @@ function exportRenderMarkdown(text) {
       var code = [];
       i++;
       while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
-      i++;   // la ligne de fermeture
+      i++;   // the closing line
       var lang = fence[1] ? ' class="language-' + exportEscapeHtml(fence[1]) + '"' : '';
       out.push('<pre><code' + lang + '>' + exportEscapeHtml(code.join('\n')) + '</code></pre>');
       continue;
@@ -277,9 +277,9 @@ function exportRenderMarkdown(text) {
   return out.join('\n');
 }
 
-// Document autonome : tout le style est dans la page, rien n'est charge de l'exterieur. @page
-// porte les marges du PDF, et les blocs de code sont autorises a se couper entre deux pages —
-// sans ca un long extrait de code sauterait une page entiere.
+// Self-contained document: all the style is in the page, nothing is loaded from outside. @page
+// carries the PDF margins, and code blocks are allowed to break across two pages —
+// without that a long code excerpt would skip a whole page.
 function exportHtml(conv, date) {
   var title = exportCleanTitle(conv.title);
 

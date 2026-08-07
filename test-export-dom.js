@@ -1,21 +1,21 @@
-// Test de export.js — la moitie qui touche a l'en-tete de claude.ai. Lance avec :
-//   npm install jsdom      (une seule fois, hors depot)
+// Test for export.js — the half that touches claude.ai's header. Run with:
+//   npm install jsdom      (once only, outside the repo)
 //   node test-export-dom.js
 //
-// Meme regle que test-folders-dom.js : si jsdom est absent, ce fichier SE SAUTE au lieu
-// d'echouer. Le depot n'a volontairement ni package.json ni node_modules.
+// Same rule as test-folders-dom.js: if jsdom is missing, this file SKIPS ITSELF instead
+// of failing. The repo deliberately has neither package.json nor node_modules.
 //
-// Il monte l'en-tete confirme par inspection (slot, conteneur d'actions, bouton « Partager »)
-// et verifie ce qui se regresse le plus facilement : le bouton pose au bon endroit, avec le
-// style COPIE du site, absent hors conversation, et repose — en un seul exemplaire — apres un
-// re-rendu de la SPA. Il ne prouve pas que les selecteurs correspondent encore au vrai site.
+// It builds the header confirmed by inspection (slot, action container, "Partager" button)
+// and checks what regresses most easily: the button placed in the right spot, with the
+// style COPIED from the site, absent outside a conversation, and put back — in a single copy — after an
+// SPA re-render. It does not prove that the selectors still match the real site.
 'use strict';
 
 var JSDOM;
 try {
   JSDOM = require('jsdom').JSDOM;
 } catch (e) {
-  console.log('  -- jsdom absent : test du DOM saute (npm install jsdom pour l\'activer)');
+  console.log('  -- jsdom missing: DOM test skipped (npm install jsdom to enable it)');
   process.exit(0);
 }
 
@@ -28,8 +28,8 @@ var UUID = '0f2a1b3c-4d5e-6f70-8192-a3b4c5d6e7f8';
 var BTN = '#__claude_export_button';
 var MENU = '#__claude_export_menu';
 
-// Classe utilitaire plausible du bouton « Partager » : le test verifie qu'elle est reprise
-// telle quelle, pas sa valeur — c'est tout l'interet de copier plutot que d'inventer un style.
+// Plausible utility class of the "Partager" button: the test checks that it is taken
+// as-is, not its value — that is the whole point of copying rather than inventing a style.
 var SHARE_CLASS = 'inline-flex items-center justify-center rounded-lg h-8 w-8 hover:bg-bg-200';
 
 function headerHtml(withShare) {
@@ -45,9 +45,9 @@ function headerHtml(withShare) {
          '</div>';
 }
 
-// Contexte « Projet » tel qu'on le suppose d'apres le warning recu : le slot d'actions est
-// absent, mais le bouton « Partager » est bien la. Le nom du conteneur est volontairement
-// different de ceux du depot : le test doit passer SANS que l'ancrage connaisse ce conteneur.
+// "Project" context as we assume it from the warning received: the action slot is
+// absent, but the "Partager" button is indeed there. The container name is deliberately
+// different from the repo's ones: the test must pass WITHOUT the anchoring knowing this container.
 function projectHeaderHtml() {
   return '<div data-testid="chat-header">' +
            '<div class="un-conteneur-que-le-code-ne-connait-pas">' +
@@ -84,40 +84,40 @@ function boot(pathname, body) {
 var tests = [];
 function test(name, fn) { tests.push({ name: name, fn: fn }); }
 
-test('bouton posé juste après « Partager », avec SA classe et SA taille d\'icône', function () {
+test('button placed just after "Partager", with ITS class and ITS icon size', function () {
   var w = boot('/chat/' + UUID, headerHtml());
   return w.settle().then(function () {
     var btn = w.doc.querySelector(BTN);
-    assert.ok(btn, 'bouton absent');
+    assert.ok(btn, 'button absent');
     assert.strictEqual(
       w.doc.querySelector('[data-testid="wiggle-controls-actions-share"]').nextSibling, btn,
       'le bouton doit suivre immédiatement « Partager »');
-    assert.strictEqual(btn.className, SHARE_CLASS, 'style non copié du bouton natif');
+    assert.strictEqual(btn.className, SHARE_CLASS, 'style not copied from the native button');
     assert.strictEqual(btn.querySelector('svg').getAttribute('width'), '16');
     assert.strictEqual(w.warns.length, 0, w.warns.join(' | '));
   });
 });
 
-test('hors conversation : aucun bouton (rien à exporter)', function () {
+test('outside a conversation: no button (nothing to export)', function () {
   var w = boot('/chat/new', headerHtml());
   return w.settle().then(function () {
     assert.strictEqual(w.doc.querySelector(BTN), null);
   });
 });
 
-test('sans bouton « Partager » : posé quand même dans le slot, style neutre + warn', function () {
+test('without a "Partager" button: still placed in the slot, neutral style + warn', function () {
   var w = boot('/chat/' + UUID, headerHtml(false));
   return w.settle().then(function () {
     var btn = w.doc.querySelector(BTN);
-    assert.ok(btn, 'bouton absent');
+    assert.ok(btn, 'button absent');
     assert.strictEqual(btn.parentElement.id, 'dframe-header-actions-slot');
-    assert.ok(btn.style.cssText.indexOf('inline-flex') !== -1, 'style de repli absent');
-    assert.ok(w.warns.length > 0, 'le repli doit être signalé en console');
+    assert.ok(btn.style.cssText.indexOf('inline-flex') !== -1, 'fallback style absent');
+    assert.ok(w.warns.length > 0, 'the fallback must be reported in the console');
   });
 });
 
-// La regression la plus facile : re-poser le bouton a chaque rendu sans retirer l'ancien.
-test('re-rendu de l\'en-tête : le bouton revient, en UN seul exemplaire', function () {
+// The easiest regression: placing the button again on every render without removing the old one.
+test('header re-render: the button comes back, in ONE single copy', function () {
   var w = boot('/chat/' + UUID, headerHtml());
   return w.settle().then(function () {
     assert.ok(w.doc.querySelector(BTN));
@@ -127,12 +127,12 @@ test('re-rendu de l\'en-tête : le bouton revient, en UN seul exemplaire', funct
       '<svg width="16" height="16"></svg></button></div></div>';
     return w.settle(250);
   }).then(function () {
-    assert.ok(w.doc.querySelector(BTN), 'bouton non reposé après re-rendu');
-    assert.strictEqual(w.doc.querySelectorAll(BTN).length, 1, 'bouton en double');
+    assert.ok(w.doc.querySelector(BTN), 'button not put back after re-render');
+    assert.strictEqual(w.doc.querySelectorAll(BTN).length, 1, 'duplicate button');
   });
 });
 
-test('clic : menu à deux entrées, fermé par Échap', function () {
+test('click: two-entry menu, closed by Escape', function () {
   var w = boot('/chat/' + UUID, headerHtml());
   return w.settle().then(function () {
     w.doc.querySelector(BTN).dispatchEvent(new w.win.MouseEvent('click', { bubbles: true }));
@@ -145,55 +145,55 @@ test('clic : menu à deux entrées, fermé par Échap', function () {
     assert.strictEqual(labels.join(' | '), 'Exporter en Markdown | Exporter en PDF');
 
     w.doc.dispatchEvent(new w.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    assert.strictEqual(w.doc.querySelector(MENU), null, 'menu non fermé');
+    assert.strictEqual(w.doc.querySelector(MENU), null, 'menu not closed');
   });
 });
 
-// ---- detection du contexte ---------------------------------------------------------------
-// Le bug corrige ici : l'ancrage supposait UNE structure d'en-tete (le slot d'actions) et se
-// desactivait partout ailleurs, alors que « Partager » — le vrai voisin de placement — etait
-// present. Ces trois tests verrouillent le fait que la detection ne depend plus de la coque.
+// ---- context detection --------------------------------------------------------------------
+// The bug fixed here: the anchoring assumed ONE header structure (the action slot) and
+// disabled itself everywhere else, while "Partager" — the real placement neighbour — was
+// present. These three tests lock down that detection no longer depends on the shell.
 
-test('en-tête sans slot d\'actions (contexte Projet) : bouton posé quand même après « Partager »',
+test('header without an action slot (Project context): button still placed after "Partager"',
   function () {
     var w = boot('/chat/' + UUID, projectHeaderHtml());
     return w.settle().then(function () {
       var btn = w.doc.querySelector(BTN);
-      assert.ok(btn, 'bouton absent alors que « Partager » est présent');
+      assert.ok(btn, 'button absent although "Partager" is present');
       assert.strictEqual(
         w.doc.querySelector('[data-testid="wiggle-controls-actions-share"]').nextSibling, btn,
         'le bouton doit suivre immédiatement « Partager »');
-      assert.strictEqual(btn.className, SHARE_CLASS, 'style non copié du bouton natif');
+      assert.strictEqual(btn.className, SHARE_CLASS, 'style not copied from the native button');
       assert.strictEqual(w.warns.length, 0, w.warns.join(' | '));
     });
   });
 
-// Cas le plus large : ni slot, ni en-tete reconnu. Tant que « Partager » est la, il y a un
-// voisin de placement — c'est le seul selecteur dont l'ancrage a vraiment besoin.
-test('ni slot ni en-tête reconnu, mais « Partager » présent : bouton posé', function () {
+// The widest case: neither slot nor recognized header. As long as "Partager" is there, there is a
+// placement neighbour — it is the only selector the anchoring really needs.
+test('neither slot nor recognized header, but "Partager" present: button placed', function () {
   var w = boot('/chat/' + UUID,
     '<div class="coque-inconnue"><button data-testid="wiggle-controls-actions-share" ' +
     'class="' + SHARE_CLASS + '"><svg width="16" height="16"></svg></button></div>');
   return w.settle().then(function () {
     var btn = w.doc.querySelector(BTN);
-    assert.ok(btn, 'bouton absent');
+    assert.ok(btn, 'button absent');
     assert.strictEqual(btn.parentElement.className, 'coque-inconnue');
   });
 });
 
-// Le filet de sécurité reste en place : un contexte sans AUCUN des deux ancrages ne casse rien.
-// C'est le seul cas où l'export doit encore se désactiver. (Le warn qui l'annonce part à 8 s,
-// trop tard pour ce harnais : on vérifie la décision elle-même, via exAnchor().)
-test('aucun ancrage : rien inséré, en-tête natif intact', function () {
+// The safety net stays in place: a context with NEITHER of the two anchors breaks nothing.
+// It is the only case where the export must still disable itself. (The warn announcing it fires at 8 s,
+// too late for this harness: we check the decision itself, through exAnchor().)
+test('no anchor: nothing inserted, native header intact', function () {
   var w = boot('/chat/' + UUID, '<div data-testid="chat-header"><span>natif</span></div>');
   return w.settle(50).then(function () {
     assert.strictEqual(w.doc.querySelector(BTN), null);
     assert.strictEqual(w.doc.querySelector('[data-testid="chat-header"]').textContent, 'natif');
-    assert.strictEqual(w.win.exAnchor(), null, 'aucun ancrage ne doit être trouvé');
+    assert.strictEqual(w.win.exAnchor(), null, 'no anchor must be found');
   });
 });
 
-// ---- execution ----------------------------------------------------------------------------
+// ---- run -----------------------------------------------------------------------------------
 var failed = 0;
 tests.reduce(function (chain, t) {
   return chain.then(function () {
@@ -206,6 +206,6 @@ tests.reduce(function (chain, t) {
     });
   });
 }, Promise.resolve()).then(function () {
-  console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passes');
+  console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passed');
   process.exit(failed ? 1 : 0);
 });

@@ -1,29 +1,29 @@
-// Monde isole, document_idle. Ajoute un bouton d'export a cote de « Partager » dans l'en-tete
-// de conversation, avec deux sorties : Markdown et PDF. claude.ai n'expose aucun export natif —
-// verifie dans le menu « … » de la sidebar, celui du titre, et la modale de partage — donc rien
-// n'est double ici.
+// Isolated world, document_idle. Adds an export button next to "Partager" in the conversation
+// header, with two outputs: Markdown and PDF. claude.ai exposes no native export —
+// checked in the sidebar's "…" menu, the title's one, and the share modal — so nothing
+// is duplicated here.
 //
-// Fonctionnalite independante du reste de l'extension : n'ecrit AUCUNE cle de storage, n'a
-// aucun rapport avec folders.js, theme.js, usage-source.js ni status-source.js.
+// A feature independent of the rest of the extension: writes NO storage key, has
+// nothing to do with folders.js, theme.js, usage-source.js or status-source.js.
 //
-// LE CONTENU VIENT DE L'API, PAS DU DOM. Le GET /api/organizations/<org>/chat_conversations/
-// <uuid> est la seule reponse qui porte tout l'historique (confirme par la capture qui sert a
-// l'estimation de contexte, voir l'en-tete de inject.js). Lire le DOM aurait exige de derouler
-// toute la conversation avant d'exporter, avec le risque d'un export tronque sans que ca se
-// voie. Ici, ou l'export est complet, ou il echoue en le disant.
+// THE CONTENT COMES FROM THE API, NOT FROM THE DOM. The GET /api/organizations/<org>/chat_conversations/
+// <uuid> is the only response that carries the whole history (confirmed by the capture that serves
+// the context estimation, see the header of inject.js). Reading the DOM would have required scrolling
+// through the whole conversation before exporting, with the risk of a truncated export without it
+// showing. Here, either the export is complete, or it fails and says so.
 //
-// Pas d'IIFE, prefixe "ex"/"EX_" sur les noms de premier niveau : les content scripts de
-// l'extension partagent un seul monde isole par frame (meme contrainte que theme.js,
-// autocontinue.js et folders.js).
+// No IIFE, "ex"/"EX_" prefix on top-level names: the extension's content scripts
+// share a single isolated world per frame (same constraint as theme.js,
+// autocontinue.js and folders.js).
 'use strict';
 
-// Selecteurs confirmes par inspection reelle. ORDRE D'ANCRAGE : le bouton « Partager » d'abord,
-// le slot en repli — et non l'inverse. Le slot avait ete pris pour « le » point d'insertion
-// stable, mais il est absent d'au moins un contexte (conversation de Projet), ou l'export se
-// desactivait alors que « Partager » etait la. Le bouton « Partager », lui, est ce qu'on vise
-// vraiment : voisin de placement ET modele de style. S'ancrer dessus rend la detection
-// independante de la coque d'en-tete, donc du contexte, sans avoir a deviner un selecteur de
-// conteneur par contexte.
+// Selectors confirmed by real inspection. ANCHORING ORDER: the "Partager" button first,
+// the slot as a fallback — and not the other way round. The slot had been taken for "the" stable
+// insertion point, but it is absent from at least one context (Project conversation), where the export
+// disabled itself while "Partager" was there. The "Partager" button, on the other hand, is what we really
+// aim at: placement neighbour AND style model. Anchoring on it makes the detection
+// independent of the header shell, hence of the context, without having to guess a
+// container selector per context.
 var EX_SLOT = 'div#dframe-header-actions-slot';
 var EX_SHARE = 'button[data-testid="wiggle-controls-actions-share"]';
 var EX_HEADER = 'div[data-testid="chat-header"]';
@@ -59,9 +59,9 @@ function exNode(tag, cls, text) {
 
 // ---- style -------------------------------------------------------------------
 
-// Le BOUTON n'a pas de style a lui : il copie la classe du bouton « Partager » (voir
-// exButton()). Ces regles ne servent donc qu'au menu et au toast, qui n'ont pas d'equivalent
-// natif a imiter.
+// The BUTTON has no style of its own: it copies the class of the "Partager" button (see
+// exButton()). These rules therefore only serve the menu and the toast, which have no native
+// equivalent to imitate.
 function exStyle() {
   if (document.getElementById(EX_STYLE_ID)) return;
 
@@ -84,8 +84,8 @@ function exStyle() {
   (document.head || document.documentElement).appendChild(el);
 }
 
-// Cale au-dessus du toast de l'auto-continue (bas 44 px) et de la pastille de contexte
-// (bas 12 px), pour que les trois puissent coexister sans se recouvrir.
+// Positioned above the auto-continue toast (bottom 44 px) and the context badge
+// (bottom 12 px), so the three can coexist without covering each other.
 function exToast(text, ms) {
   var root = document.documentElement;
   if (!root) return null;
@@ -96,11 +96,11 @@ function exToast(text, ms) {
   return el;
 }
 
-// ---- recuperation de la conversation -----------------------------------------
+// ---- fetching the conversation -----------------------------------------------
 
-// Les URL que la PAGE a deja appelees. C'est de la que sort l'uuid d'organisation : le relever
-// ici, c'est le lire d'une requete reellement emise, au lieu de le deviner par un chemin
-// suppose (ORGS_PATH, la seule supposition non verifiee du depot, n'est pas utilisee).
+// The URLs the PAGE has already called. That is where the organization uuid comes from: collecting it
+// here means reading it from a request actually emitted, instead of guessing it from an assumed
+// path (ORGS_PATH, the only unverified assumption of the repo, is not used).
 function exSeenUrls() {
   try {
     return performance.getEntriesByType('resource').map(function (e) { return e.name; });
@@ -119,26 +119,26 @@ function exFetchConversation() {
       "impossible de retrouver l'organisation dans les requêtes de la page — recharger l'onglet"));
   }
 
-  // Same-origin depuis la page : cookies, Origin et Referer sont ceux que l'API attend. C'est
-  // le meme mecanisme que le relais de secours du sondage d'usage (content.js).
+  // Same-origin from the page: cookies, Origin and Referer are the ones the API expects. It is
+  // the same mechanism as the usage polling fallback relay (content.js).
   return fetch(url, { credentials: 'include', headers: { accept: 'application/json' } })
     .then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status + ' sur le GET de conversation');
       return res.json();
     })
     .then(function (json) {
-      var conv = parseConversation(json);   // dit deja en console ce qui manque
+      var conv = parseConversation(json);   // already says in the console what is missing
       if (!conv) throw new Error('format de réponse inconnu (voir la console)');
       if (!conv.messages.length) throw new Error('aucun message exploitable dans la réponse');
 
-      // Le titre de la reponse fait foi ; document.title est un repli, il porte le suffixe du
-      // site et vaut « Claude » sur une conversation encore sans nom.
+      // The response title is authoritative; document.title is a fallback, it carries the site's
+      // suffix and reads "Claude" on a conversation still without a name.
       if (!conv.title) conv.title = String(document.title || '').replace(/\s*[-–|]\s*Claude\s*$/i, '');
       return conv;
     });
 }
 
-// ---- sorties -----------------------------------------------------------------
+// ---- outputs -----------------------------------------------------------------
 
 function exDownload(text, mime, filename) {
   var url = URL.createObjectURL(new Blob([text], { type: mime + ';charset=utf-8' }));
@@ -148,7 +148,7 @@ function exDownload(text, mime, filename) {
   document.documentElement.appendChild(a);
   a.click();
   a.remove();
-  // Laisse au telechargement le temps de demarrer avant de liberer l'objet.
+  // Gives the download time to start before releasing the object.
   setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
 }
 
@@ -158,13 +158,13 @@ function exExportMarkdown(conv, now) {
   exToast('Markdown exporté', 3000);
 }
 
-// Pas de jsPDF ni d'aucune bibliotheque : on imprime un document autonome et Chrome propose
-// « Enregistrer au format PDF ». L'impression passe par une iframe hors ecran plutot que par
-// une fenetre : pas de bloqueur de pop-up a affronter, et surtout window.print() n'imprime
-// alors QUE ce document, pas la page claude.ai autour.
+// No jsPDF nor any library: we print a self-contained document and Chrome offers
+// "Save as PDF". Printing goes through an offscreen iframe rather than a
+// window: no pop-up blocker to fight, and above all window.print() then prints
+// ONLY that document, not the claude.ai page around it.
 //
-// srcdoc herite de la CSP de claude.ai : on n'y met donc aucun script, uniquement du HTML et
-// une feuille de style. C'est aussi pour ca que print() est appele d'ici, de l'exterieur.
+// srcdoc inherits claude.ai's CSP: we therefore put no script in it, only HTML and
+// a stylesheet. That is also why print() is called from here, from outside.
 function exExportPdf(conv, now) {
   var frame = exNode('iframe');
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
@@ -175,11 +175,11 @@ function exExportPdf(conv, now) {
       frame.contentWindow.focus();
       frame.contentWindow.print();
     } catch (e) {
-      console.warn('[export] impression impossible :', (e && e.message) || e);
+      console.warn('[export] printing impossible:', (e && e.message) || e);
       exToast("Impression impossible — l'export Markdown reste disponible", 5000);
     }
-    // print() est bloquant tant que la boite de dialogue est ouverte ; on ne retire l'iframe
-    // qu'apres, et avec du retard, parce que Chrome lit encore le document pendant l'apercu.
+    // print() blocks as long as the dialog is open; we only remove the iframe
+    // afterwards, and with a delay, because Chrome still reads the document during the preview.
     setTimeout(function () { frame.remove(); }, 60000);
   });
 
@@ -205,7 +205,7 @@ function exRun(kind) {
     else exExportPdf(conv, now);
   }).catch(function (e) {
     var msg = (e && e.message) || String(e);
-    console.warn('[export] échec :', msg);
+    console.warn('[export] failure:', msg);
     exToast('Export impossible : ' + msg, 6000);
   }).then(function () {
     if (waiting && waiting.parentNode) waiting.parentNode.removeChild(waiting);
@@ -230,7 +230,7 @@ function exOpenMenu(anchor) {
 
   document.documentElement.appendChild(menu);
 
-  // Aligne sous le bouton, puis rentre dans la fenetre si ca deborde.
+  // Aligned under the button, then pulled back into the window if it overflows.
   var box = anchor.getBoundingClientRect();
   menu.style.top = (box.bottom + 6) + 'px';
   menu.style.left = box.left + 'px';
@@ -251,11 +251,11 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') exCloseMenu();
 }, true);
 
-// ---- bouton ------------------------------------------------------------------
+// ---- button ------------------------------------------------------------------
 
-// Icone de telechargement, dessinee au trait comme celles du site (currentColor, trait de 2,
-// bouts arrondis) plutot qu'un caractere : un emoji ne suivrait ni la couleur ni la taille des
-// boutons voisins.
+// Download icon, drawn as a stroke like the site's ones (currentColor, stroke of 2,
+// rounded caps) rather than a character: an emoji would follow neither the color nor the size of the
+// neighbouring buttons.
 function exIcon(size) {
   var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
@@ -274,10 +274,10 @@ function exIcon(size) {
   return svg;
 }
 
-// Le style n'est pas invente : on COPIE la classe du bouton « Partager », donc la taille, le
-// rayon, les etats de survol et le theme suivent le site sans qu'on ait a les connaitre. Meme
-// procede que folders.js pour les sections. Sans bouton « Partager », on se rabat sur un style
-// neutre plutot que de ne rien afficher.
+// The style is not invented: we COPY the class of the "Partager" button, so the size, the
+// radius, the hover states and the theme follow the site without our having to know them. Same
+// technique as folders.js for the sections. Without a "Partager" button, we fall back on a neutral
+// style rather than displaying nothing.
 function exButton(share) {
   var btn = exNode('button');
   btn.id = EX_BTN_ID;
@@ -310,14 +310,14 @@ function exButton(share) {
   return btn;
 }
 
-// Ou poser le bouton, quel que soit le contexte (conversation standard, conversation de Projet).
-// Rend { share, container } ou null si l'en-tete n'offre aucun des deux ancrages connus.
+// Where to place the button, whatever the context (standard conversation, Project conversation).
+// Returns { share, container } or null if the header offers neither of the two known anchors.
 //
-// La recherche du bouton « Partager » va du plus proche au plus large — slot, puis en-tete, puis
-// document — pour que le cas standard se comporte exactement comme avant, et que les contextes
-// sans slot ni en-tete reconnu trouvent quand meme leur ancre. AUCUN selecteur nouveau n'est
-// introduit ici : c'est la meme paire confirmee, essayee dans un ordre qui ne suppose plus une
-// seule structure d'en-tete.
+// The search for the "Partager" button goes from nearest to widest — slot, then header, then
+// document — so that the standard case behaves exactly as before, and contexts
+// without a slot or a recognized header still find their anchor. NO new selector is
+// introduced here: it is the same confirmed pair, tried in an order that no longer assumes a
+// single header structure.
 function exAnchor() {
   var slot = document.querySelector(EX_SLOT);
   var header = document.querySelector(EX_HEADER);
@@ -331,8 +331,8 @@ function exAnchor() {
   return null;
 }
 
-// Le bouton n'a de sens que sur une conversation ouverte : sur l'accueil il n'y a rien a
-// exporter. Il est donc pose et retire au fil de la navigation.
+// The button only makes sense on an open conversation: on the home page there is nothing to
+// export. It is therefore placed and removed as navigation goes.
 function exPlace() {
   if (!exAlive()) return;
 
@@ -345,11 +345,11 @@ function exPlace() {
   }
 
   if (!anchor.share) {
-    exWarn('share', 'bouton « ' + EX_SHARE + ' » introuvable : le bouton d\'export prend un ' +
-      'style neutre au lieu de copier celui du site.');
+    exWarn('share', 'button "' + EX_SHARE + '" not found: the export button takes a ' +
+      'neutral style instead of copying the site\'s one.');
   }
 
-  // Deja en place au bon endroit : un re-rendu de l'en-tete n'a pas eu lieu, on ne touche a rien.
+  // Already in place at the right spot: no header re-render happened, we touch nothing.
   if (existing && existing.parentNode === anchor.container &&
       (!anchor.share || existing.previousSibling === anchor.share)) return;
   if (existing) existing.remove();
@@ -357,16 +357,16 @@ function exPlace() {
   exStyle();
   var btn = exButton(anchor.share);
 
-  // Juste apres « Partager », dans son propre conteneur ; a defaut, en fin du slot.
+  // Just after "Partager", in its own container; failing that, at the end of the slot.
   if (anchor.share) anchor.container.insertBefore(btn, anchor.share.nextSibling);
   else anchor.container.appendChild(btn);
 }
 
 // ---- observation -------------------------------------------------------------
 
-// claude.ai est une SPA : l'en-tete se re-rend a chaque navigation, et notre bouton part avec.
-// On observe donc l'en-tete — ou le document tant qu'il n'existe pas — et on repose le bouton
-// apres chaque rendu. takeRecords() jette les mutations qu'on vient soi-meme de provoquer.
+// claude.ai is an SPA: the header re-renders on every navigation, and our button goes with it.
+// We therefore observe the header — or the document as long as it does not exist — and place the button
+// back after each render. takeRecords() discards the mutations we have just caused ourselves.
 function exSchedule() {
   clearTimeout(exTimer);
   exTimer = setTimeout(function () {
@@ -389,16 +389,16 @@ function exWatch() {
 exWatch();
 exPlace();
 
-// Un seul message, explicite, si AUCUN des deux ancrages n'est jamais apparu. Reserve au cas ou
-// une conversation est bien ouverte : sur l'accueil, leur absence est normale.
+// A single, explicit message if NEITHER of the two anchors has ever appeared. Reserved for the case
+// where a conversation is indeed open: on the home page, their absence is normal.
 //
-// Le message nomme les deux selecteurs et dit si l'en-tete lui-meme a ete reconnu : c'est ce qui
-// distingue « l'en-tete a change de structure » de « ce contexte n'a pas d'en-tete de
-// conversation du tout », et ca evite un second aller-retour d'inspection.
+// The message names both selectors and says whether the header itself was recognized: that is what
+// distinguishes "the header changed structure" from "this context has no conversation
+// header at all", and it avoids a second inspection round trip.
 setTimeout(function () {
   if (document.getElementById(EX_BTN_ID) || !exportUuidFromPath(location.pathname)) return;
-  exWarn('slot', 'aucun point d\'ancrage dans l\'en-tête : ni « ' + EX_SHARE + ' » ni « ' +
-    EX_SLOT + ' » (en-tête « ' + EX_HEADER + ' » ' +
-    (document.querySelector(EX_HEADER) ? 'présent' : 'absent') + '). Le bouton d\'export est ' +
-    'désactivé et rien n\'a été inséré. Voir la section Export du README.');
+  exWarn('slot', 'no anchor point in the header: neither "' + EX_SHARE + '" nor "' +
+    EX_SLOT + '" (header "' + EX_HEADER + '" ' +
+    (document.querySelector(EX_HEADER) ? 'present' : 'absent') + '). The export button is ' +
+    'disabled and nothing was inserted. See the Export section of the README.');
 }, 8000);

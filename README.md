@@ -1,74 +1,74 @@
 # Claude Usage
 
-Extension Chrome personnelle (Manifest V3, JS vanilla, aucun build step). Elle affiche :
+Personal Chrome extension (Manifest V3, vanilla JS, no build step). It displays:
 
-1. l'usage **session (5 h)** et **hebdomadaire (7 j)** de claude.ai — icône à deux anneaux,
-   badge, popup ;
-2. une **estimation** de la taille du contexte de la conversation ouverte, en pastille sur
-   la page ;
-3. le **statut de Claude** lu sur `status.claude.com` (claude.ai, Claude Code, API…), en
-   section du popup.
+1. claude.ai's **session (5 h)** and **weekly (7 d)** usage — two-ring icon,
+   badge, popup;
+2. an **estimate** of the context size of the open conversation, as a badge on
+   the page;
+3. **Claude's status** read from `status.claude.com` (claude.ai, Claude Code, API…), as a
+   popup section.
 
-Elle permet aussi, via deux fonctionnalités totalement indépendantes des précédentes et l'une
-de l'autre :
+It also allows, through two features completely independent of the previous ones and of each
+other:
 
-- de **personnaliser le thème** de claude.ai (couleur d'accent, poids de police, coins et
-  ombres, police de lecture) ;
-- de **relancer automatiquement** une réponse arrêtée par la limite de tool-use
-  (*auto-continue*) — désactivé par défaut, avec compteur de continuations et pause ;
-- de ranger les conversations dans des **dossiers personnalisés** dans la sidebar, sans rapport
-  avec les *Projects* natifs — ⚠️ la fonctionnalité la plus fragile du dépôt, voir sa section ;
-- d'**exporter une conversation** en Markdown ou en PDF, depuis un bouton à côté de
-  « Partager » — le contenu vient de l'API, jamais du DOM, donc jamais tronqué.
+- **customizing claude.ai's theme** (accent color, font weight, corners and
+  shadows, reading font);
+- **automatically resuming** a reply stopped by the tool-use limit
+  (*auto-continue*) — disabled by default, with a continuation counter and a pause;
+- filing conversations into **custom folders** in the sidebar, unrelated
+  to the native *Projects* — Warning: the most fragile feature in the repo, see its section;
+- **exporting a conversation** to Markdown or PDF, from a button next to
+  "Partager" — the content comes from the API, never from the DOM, hence never truncated.
 
-Rien ne sort de la machine, sauf vers claude.ai et status.claude.com : tout est dans
-`chrome.storage.local`, aucun serveur tiers.
+Nothing leaves the machine, except towards claude.ai and status.claude.com: everything is in
+`chrome.storage.local`, no third-party server.
 
 ## Installation
 
-1. `chrome://extensions` → activer le **mode développeur**
-2. **Charger l'extension non empaquetée** → sélectionner ce dossier
-3. Être connecté à `https://claude.ai` — le sondage utilise les cookies de session
+1. `chrome://extensions` → enable **developer mode**
+2. **Load unpacked extension** → select this folder
+3. Be signed in to `https://claude.ai` — polling uses the session cookies
 
-Chrome 111+ requis (`"world": "MAIN"` en content script statique).
+Chrome 111+ required (`"world": "MAIN"` in a static content script).
 
-Après avoir rechargé l'extension, **toujours recharger l'onglet claude.ai** — sinon le patch
-injecté survit mais l'onglet ne peut plus servir de relais.
+After reloading the extension, **always reload the claude.ai tab** — otherwise the injected
+patch survives but the tab can no longer serve as a relay.
 
-## ⚠️ Résolution de l'organisation : à compléter
+## Warning: organization resolution is incomplete
 
-`GET /api/organizations/<org>/usage` est **confirmé** par capture réseau (voir ci-dessous).
-Ce qui reste une supposition, c'est `ORGS_PATH` dans [`usage-source.js`](usage-source.js) —
-le chemin utilisé pour retrouver `<org>` n'a jamais été capturé.
+`GET /api/organizations/<org>/usage` is **confirmed** by network capture (see below).
+What remains an assumption is `ORGS_PATH` in [`usage-source.js`](usage-source.js) —
+the path used to find `<org>` has never been captured.
 
-Si le sondage échoue *avant même* d'atteindre l'endpoint d'usage (chercher `HTTP 404` ou
-`format de réponse inconnu` en console, mais sur la requête qui précède `.../usage`), c'est
-`ORGS_PATH` et `pickOrgId()` qu'il faut corriger, avec la même méthode que pour l'usage :
-onglet **Network**, filtre *Fetch/XHR*, repérer la requête qui liste les organisations.
+If polling fails *before even* reaching the usage endpoint (look for `HTTP 404` or
+`unknown response format` in the console, but on the request preceding `.../usage`), it is
+`ORGS_PATH` and `pickOrgId()` that need fixing, with the same method as for usage:
+**Network** tab, *Fetch/XHR* filter, spot the request that lists the organizations.
 
-## D'où viennent les données
+## Where the data comes from
 
-L'usage est **sondé** toutes les 60 s par le service worker (`chrome.alarms`), avec
-`credentials: "include"`, sur `GET /api/organizations/<org>/usage`. Le service worker n'ayant
-pas d'origine `claude.ai`, l'API peut refuser sa requête : sur **401/403**, l'appel est rejoué
-depuis un onglet `claude.ai` ouvert, où il est same-origin (`content.js` sert de relais). Sans
-onglet ouvert et avec un refus, le sondage échoue et le popup montre l'âge de la dernière
-valeur connue.
+Usage is **polled** every 60 s by the service worker (`chrome.alarms`), with
+`credentials: "include"`, on `GET /api/organizations/<org>/usage`. Since the service worker has
+no `claude.ai` origin, the API may refuse its request: on **401/403**, the call is replayed
+from an open `claude.ai` tab, where it is same-origin (`content.js` acts as the relay). Without
+an open tab and with a refusal, polling fails and the popup shows the age of the last
+known value.
 
-L'estimation de contexte, elle, n'émet toujours **aucun** appel : elle observe les réponses
-que claude.ai reçoit déjà.
+Context estimation, for its part, still emits **no** call: it observes the responses
+claude.ai already receives.
 
-Le statut vient d'une source à part, sur un autre domaine et sans authentification — voir
-[Statut de Claude](#statut-de-claude) plus bas.
+The status comes from a separate source, on another domain and without authentication — see
+[Claude's status](#claudes-status) below.
 
-| URL (pathname) | Ce qu'on en tire |
+| URL (pathname) | What we get from it |
 | --- | --- |
-| `…/organizations/<org>/usage` | `utilization` (0-100) et `resets_at` des fenêtres 5 h et 7 j, `severity` par fenêtre |
-| `…/chat_conversations/<uuid>/completion` (SSE) | la longueur du texte streamé |
-| `…/chat_conversations/<uuid>` (GET JSON) | la longueur de l'historique complet |
-| `status.claude.com/api/v2/summary.json` | l'indicateur global, l'état des composants Claude, l'incident en cours |
+| `…/organizations/<org>/usage` | `utilization` (0-100) and `resets_at` of the 5 h and 7 d windows, `severity` per window |
+| `…/chat_conversations/<uuid>/completion` (SSE) | the length of the streamed text |
+| `…/chat_conversations/<uuid>` (GET JSON) | the length of the full history |
+| `status.claude.com/api/v2/summary.json` | the overall indicator, the state of the Claude components, the ongoing incident |
 
-Réponse réelle de l'API d'usage (capturée le 2026-07-29), simplifiée :
+Real response of the usage API (captured on 2026-07-29), simplified:
 
 ```json
 {
@@ -84,40 +84,40 @@ Réponse réelle de l'API d'usage (capturée le 2026-07-29), simplifiée :
 }
 ```
 
-**`utilization` et `percent` sont des entiers 0-100**, pas des fractions 0-1 comme l'était
-l'ancien `windows.utilization` du flux SSE — piège à ne pas réintroduire si ce fichier est
-retouché : `parseUsage()` divise par 100 une seule fois, jamais ailleurs.
+**`utilization` and `percent` are 0-100 integers**, not 0-1 fractions as the old
+`windows.utilization` of the SSE stream was — a pitfall not to reintroduce if this file is
+touched: `parseUsage()` divides by 100 exactly once, never anywhere else.
 
-`parseUsage()` (dans `usage-source.js`) normalise cette réponse vers la forme historique de
-l'événement SSE `message_limit`, qui reste le contrat interne de la clé `usage` :
-`{ windows: { '5h': {utilization, status?, resets_at?}, '7d': {...} } }`, `utilization` en
-fraction 0-1. Priorité à `limits[]` (`kind:"session"` → 5h, `kind:"weekly_all"` → 7d ;
-`weekly_scoped`, l'usage par modèle, est ignoré) ; repli sur `five_hour`/`seven_day` à la
-racine si `limits` manque, est vide, ou ne porte pas l'entrée cherchée. `severity` se mappe
-sur `status` (`"warning"` → `approaching_limit`) ; `"over_limit"` n'a **jamais été observé**
-côté `severity`, ce mapping est extrapolé par analogie avec l'ancien flux SSE.
+`parseUsage()` (in `usage-source.js`) normalizes this response to the historical shape of
+the `message_limit` SSE event, which remains the internal contract of the `usage` key:
+`{ windows: { '5h': {utilization, status?, resets_at?}, '7d': {...} } }`, `utilization` as a
+0-1 fraction. Priority to `limits[]` (`kind:"session"` → 5h, `kind:"weekly_all"` → 7d;
+`weekly_scoped`, per-model usage, is ignored); fallback to `five_hour`/`seven_day` at the
+root if `limits` is missing, empty, or does not carry the sought entry. `severity` maps
+onto `status` (`"warning"` → `approaching_limit`); `"over_limit"` has **never been observed**
+on the `severity` side, that mapping is extrapolated by analogy with the old SSE stream.
 
-Un champ absent, mal typé, ou une `severity` inconnue est **omis**, jamais mis à une valeur
-inventée : `utilOf()`/`colorFor()` rendent alors du gris ou dérivent la couleur du seul
-pourcentage, plutôt qu'un chiffre faux ou une exception. Couvert par
-[`test-usage-source.js`](test-usage-source.js) (`node test-usage-source.js`), avec la réponse
-réelle ci-dessus en cas de test principal.
+A missing or mistyped field, or an unknown `severity`, is **omitted**, never set to an
+invented value: `utilOf()`/`colorFor()` then yield grey or derive the color from the
+percentage alone, rather than a wrong figure or an exception. Covered by
+[`test-usage-source.js`](test-usage-source.js) (`node test-usage-source.js`), with the real
+response above as the main test case.
 
-`extra_usage` / `spend` (crédits payants) ne sont pas encore branchés — équivalent de l'ancien
-`overageInUse`, jamais observé non plus. À câbler dans `evaluate()` de `background.js` si ce
-point redevient utile.
+`extra_usage` / `spend` (paid credits) are not wired up yet — the equivalent of the old
+`overageInUse`, never observed either. To be wired into `evaluate()` in `background.js` if this
+point becomes useful again.
 
-### Statut de Claude
+### Claude's status
 
-Troisième source, **totalement indépendante** des deux autres : autre domaine, endpoint public
-(aucun cookie utile), rien de partagé en storage, et elle ne touche ni l'icône, ni l'historique,
-ni les notifications. Sondée toutes les **5 min** par l'alarme `status-poll` — le statut bouge
-rarement, inutile de solliciter la page au rythme de l'usage.
+A third source, **completely independent** of the other two: another domain, a public endpoint
+(no useful cookie), nothing shared in storage, and it touches neither the icon, nor the history,
+nor the notifications. Polled every **5 min** by the `status-poll` alarm — the status moves
+rarely, no point hitting the page at the pace of usage.
 
-`status.claude.com` est un **Statuspage** (Atlassian) : son API v2 est publique et non
-authentifiée. On prend `summary.json` et pas `status.json`, parce qu'une seule requête donne
-l'indicateur global, les composants **et** les incidents. Réponse réelle (capturée le
-2026-07-30, un incident était actif), simplifiée :
+`status.claude.com` is a **Statuspage** (Atlassian): its v2 API is public and
+unauthenticated. We take `summary.json` and not `status.json`, because a single request gives
+the overall indicator, the components **and** the incidents. Real response (captured on
+2026-07-30, an incident was active), simplified:
 
 ```json
 {
@@ -136,1091 +136,1090 @@ l'indicateur global, les composants **et** les incidents. Réponse réelle (capt
 }
 ```
 
-`parseStatus()` (dans [`status-source.js`](status-source.js)) normalise ça en
-`{ level, components: [{ name, level, status }], incident? }`, `level` valant
-`operational` / `degraded` / `outage`. Deux points que cette capture impose :
+`parseStatus()` (in [`status-source.js`](status-source.js)) normalizes this into
+`{ level, components: [{ name, level, status }], incident? }`, `level` being
+`operational` / `degraded` / `outage`. Two points this capture imposes:
 
-- **`status.indicator` peut sous-estimer la réalité** : il annonce `minor` alors que quatre
-  composants sont en `partial_outage` et que l'incident est d'impact `major`. Le niveau global
-  est donc le **pire de (indicateur, composants retenus)**, jamais l'indicateur seul.
-- **Le filtre « nom contenant *claude* » ne retire rien aujourd'hui** : les six noms le
-  contiennent. Il n'est là que pour écarter un composant étranger si Atlassian en ajoute un.
+- **`status.indicator` can understate reality**: it announces `minor` while four
+  components are in `partial_outage` and the incident has `major` impact. The overall level
+  is therefore the **worst of (indicator, retained components)**, never the indicator alone.
+- **The "name containing *claude*" filter removes nothing today**: all six names
+  contain it. It is only there to discard a foreign component if Atlassian adds one.
 
-Un statut de composant inconnu — ou absent — donne `degraded`, pas `operational` : pour un
-afficheur de panne, une fausse alerte qui envoie voir status.claude.com coûte moins cher qu'un
-« tout va bien » affiché pendant une panne. La valeur brute est conservée à côté de `level`
-pour rester diagnosticable. `status.description` n'est pas repris (anglais, et redondant avec
-`level`) : le popup a ses propres libellés. Couvert par
-[`test-status-source.js`](test-status-source.js) (`node test-status-source.js`), avec la capture
-ci-dessus en cas de test principal.
+An unknown — or missing — component status yields `degraded`, not `operational`: for an
+outage display, a false alarm that sends you to status.claude.com costs less than an
+"all is well" shown during an outage. The raw value is kept next to `level`
+so it stays diagnosable. `status.description` is not carried over (English, and redundant with
+`level`): the popup has its own labels. Covered by
+[`test-status-source.js`](test-status-source.js) (`node test-status-source.js`), with the capture
+above as the main test case.
 
-Côté popup, la section « Statut » se réduit à **une ligne** quand tout est nominal (« Tous les
-systèmes opérationnels ») et ne détaille que les composants hors état nominal, précédés du titre
-de l'incident quand il y en a un. Un lien ouvre `status.claude.com` dans un nouvel onglet pour
-le détail complet. Elle réutilise la palette de `common.js` mais **pas** `colorFor()`, qui
-attend un objet fenêtre d'usage.
+On the popup side, the "Statut" section shrinks to **a single line** when everything is nominal
+("Tous les systèmes opérationnels") and only details the components outside the nominal state, preceded by the
+incident title when there is one. A link opens `status.claude.com` in a new tab for
+the full detail. It reuses the palette from `common.js` but **not** `colorFor()`, which
+expects a usage window object.
 
 ## Architecture
 
-| Fichier | Monde | Rôle |
+| File | World | Role |
 | --- | --- | --- |
-| `inject.js` | MAIN | patch de `fetch` et de l'History API, tap SSE, comptage de caractères |
-| `content.js` | isolé | relais de secours : refait le fetch d'usage same-origin quand le SW est refusé |
-| `context-estimator.js` | isolé | tient l'estimation de contexte par conversation et affiche la pastille sur `/chat/*` |
-| `theme.js` | isolé | surcharge les tokens de thème du site — **indépendant du reste** ; seul module aussi injecté dans l'iframe `a.claude.ai` (spinner plein écran) |
-| `autocontinue.js` | isolé | lit le DOM et clique le bouton *Continue* — **indépendant du reste** |
-| `background.js` | service worker | sonde les deux API (usage 60 s, statut 5 min), écrit `usage` et `status`, dessine l'icône, notifie |
-| `usage-source.js` | SW | **seul** point d'adaptation à l'API d'usage : URL + `parseUsage()` |
-| `status-source.js` | SW | **seul** point d'adaptation à status.claude.com : URL + `parseStatus()` — **indépendant du reste** |
-| `autocontinue-source.js` | SW + page + popup | **seul** point d'adaptation de l'auto-continue : phrases + `acDecide()`, logique pure |
-| `autocontinue-bg.js` | SW | réveille `acTick()` dans chaque onglet claude.ai toutes les 5 s — **indépendant du reste** |
-| `folders-source.js` | page | **seul** point d'adaptation « données » des dossiers : uuid + CRUD, logique pure |
-| `folders.js` | isolé | insère les dossiers et **déplace** les items de la sidebar — ⚠️ **le plus fragile du dépôt** |
-| `export-source.js` | page | **seul** point d'adaptation de l'export : URL, `parseConversation()`, Markdown/HTML — logique pure |
-| `export.js` | isolé | bouton d'export dans l'en-tête, menu, téléchargement et impression — **indépendant du reste** |
-| `common.js` | SW + popup | seuils de couleur partagés (`utilOf`, `colorFor`) |
-| `popup.html` / `popup.js` | popup | les deux fenêtres d'usage, la projection, la section « Statut », les réglages |
+| `inject.js` | MAIN | patches `fetch` and the History API, SSE tap, character counting |
+| `content.js` | isolated | fallback relay: redoes the usage fetch same-origin when the SW is refused |
+| `context-estimator.js` | isolated | keeps the per-conversation context estimate and displays the badge on `/chat/*` |
+| `theme.js` | isolated | overrides the site's theme tokens — **independent of the rest**; the only module also injected into the `a.claude.ai` iframe (fullscreen spinner) |
+| `autocontinue.js` | isolated | reads the DOM and clicks the *Continue* button — **independent of the rest** |
+| `background.js` | service worker | polls both APIs (usage 60 s, status 5 min), writes `usage` and `status`, draws the icon, notifies |
+| `usage-source.js` | SW | the **only** adaptation point to the usage API: URL + `parseUsage()` |
+| `status-source.js` | SW | the **only** adaptation point to status.claude.com: URL + `parseStatus()` — **independent of the rest** |
+| `autocontinue-source.js` | SW + page + popup | the **only** adaptation point of auto-continue: phrases + `acDecide()`, pure logic |
+| `autocontinue-bg.js` | SW | wakes `acTick()` in each claude.ai tab every 5 s — **independent of the rest** |
+| `folders-source.js` | page | the **only** "data" adaptation point of folders: uuid + CRUD, pure logic |
+| `folders.js` | isolated | inserts the folders and **moves** the sidebar items — Warning: **the most fragile in the repo** |
+| `export-source.js` | page | the **only** adaptation point of the export: URL, `parseConversation()`, Markdown/HTML — pure logic |
+| `export.js` | isolated | export button in the header, menu, download and printing — **independent of the rest** |
+| `common.js` | SW + popup | shared color thresholds (`utilOf`, `colorFor`) |
+| `popup.html` / `popup.js` | popup | the two usage windows, the projection, the "Statut" section, the settings |
 
-Clés `chrome.storage.local` :
+`chrome.storage.local` keys:
 
-- `usage` = `{ data, updatedAt }` — clé unique, réécrite **à chaque sondage** même si rien n'a bougé
-- `status` = `{ data, updatedAt }` — statut de status.claude.com, réécrite à chaque sondage
-- `orgId` = uuid d'organisation mis en cache, invalidé sur 401/403/404
-- `ctx:<uuid>` = `{ chars, tokens, updatedAt }` — une clé par conversation, LRU 20
-- `usageHistory` = `[{ t, u5, u7 }, …]` — historique roulant, 50 points max
+- `usage` = `{ data, updatedAt }` — a single key, rewritten **on every poll** even if nothing moved
+- `status` = `{ data, updatedAt }` — status from status.claude.com, rewritten on every poll
+- `orgId` = cached organization uuid, invalidated on 401/403/404
+- `ctx:<uuid>` = `{ chars, tokens, updatedAt }` — one key per conversation, LRU 20
+- `usageHistory` = `[{ t, u5, u7 }, …]` — rolling history, 50 points max
 - `notifyState` = `{ windows: { '5h': { threshold, overLimit, notifiedReset }, … }, overage }` — anti-spam
-- `settings` = `{ notifications: false }` — réglages du popup
-- `accentColor`, `fontWeightPreset`, `radiusPreset`, `fontFamily` — personnalisation du thème,
-  quatre clés de premier niveau ; **toutes absentes** = thème d'origine intact (voir plus bas)
+- `settings` = `{ notifications: false }` — popup settings
+- `accentColor`, `fontWeightPreset`, `radiusPreset`, `fontFamily` — theme customization,
+  four top-level keys; **all absent** = original theme intact (see below)
 - `autoContinueEnabled`, `autoContinueMaxCount`, `autoContinueCount`, `autoContinuePaused` —
-  auto-continue, quatre clés de premier niveau ; **toutes absentes** = désactivé (voir plus bas)
-- `folders` = `[{ id, name, color, collapsed }, …]` et `folderAssignments` =
-  `{ "<uuid>": "<id dossier>" }` — dossiers personnalisés de la sidebar ; **absentes** = aucun
-  dossier, tout reste dans « Récents » (voir plus bas)
+  auto-continue, four top-level keys; **all absent** = disabled (see below)
+- `folders` = `[{ id, name, color, collapsed }, …]` and `folderAssignments` =
+  `{ "<uuid>": "<folder id>" }` — custom sidebar folders; **absent** = no
+  folder, everything stays in "Récents" (see below)
 
-### Sondage
+### Polling
 
-Deux alarmes indépendantes : `usage-poll` à `periodInMinutes: 1` (le plancher de
-`chrome.alarms`) et `status-poll` à 5 min, plus un sondage immédiat de chacune sur `onStartup`
-et `onInstalled` pour ne pas attendre la première alarme.
+Two independent alarms: `usage-poll` at `periodInMinutes: 1` (the floor of
+`chrome.alarms`) and `status-poll` at 5 min, plus an immediate poll of each on `onStartup`
+and `onInstalled` so as not to wait for the first alarm.
 
-Le sondage du statut appelle `fetchJson()` directement, **pas** `getJson()` : le repli sur un
-onglet claude.ai n'aurait aucun sens pour un endpoint public d'un autre domaine, et ses
-avertissements `[usage]` seraient trompeurs.
+Status polling calls `fetchJson()` directly, **not** `getJson()`: falling back to a
+claude.ai tab would make no sense for a public endpoint on another domain, and its
+`[usage]` warnings would be misleading.
 
-Le service worker étant détruit et relancé en permanence, le code de premier niveau rejoue à
-chaque réveil : l'alarme n'est (re)créée que si `chrome.alarms.get` la trouve absente —
-`create` remettrait le compte à zéro et repousserait le sondage indéfiniment.
+Since the service worker is destroyed and restarted constantly, the top-level code replays on
+every wake-up: the alarm is only (re)created if `chrome.alarms.get` finds it missing —
+`create` would reset the count to zero and push polling back indefinitely.
 
-L'icône, l'historique et les notifications restent branchés sur `chrome.storage.onChanged` :
-l'événement se déclenche **aussi** dans le contexte qui a écrit, le sondage n'a donc rien à
-appeler directement.
+The icon, the history and the notifications stay wired to `chrome.storage.onChanged`:
+the event fires **also** in the context that wrote, so polling has nothing to
+call directly.
 
-### Icône
+### Icon
 
-Deux anneaux concentriques dessinés dans un `OffscreenCanvas` : **extérieur = 7 j**,
-**intérieur = 5 h**, chacun coloré par sa propre fenêtre (vert < 50 %, jaune < 75 %,
-orange < 90 %, rouge au-delà ; gris si la donnée manque). Le badge texte porte le % de la
-fenêtre 5 h. Aucun PNG n'est livré : le service worker dessine l'icône dès `onInstalled` et
+Two concentric rings drawn in an `OffscreenCanvas`: **outer = 7 d**,
+**inner = 5 h**, each colored by its own window (green < 50 %, yellow < 75 %,
+orange < 90 %, red beyond; grey if the data is missing). The text badge carries the % of the
+5 h window. No PNG is shipped: the service worker draws the icon as early as `onInstalled` and
 `onStartup`.
 
 ### Notifications
 
-**Désactivées par défaut** — la case à cocher est dans le popup, la préférence va dans
-`settings.notifications`. Cette **unique** préférence gouverne toutes les notifications, seuils
-comme fin de reset.
+**Disabled by default** — the checkbox is in the popup, the preference goes into
+`settings.notifications`. This **single** preference governs all the notifications, thresholds
+as well as reset endings.
 
-#### Seuils
+#### Thresholds
 
-Trois seuils : **75 %**, **90 %**, **95 %**, évalués séparément sur chaque fenêtre. Le corps
-de la notification donne la fenêtre, le % courant et l'heure de reset en heure locale.
+Three thresholds: **75 %**, **90 %**, **95 %**, evaluated separately on each window. The body
+of the notification gives the window, the current % and the reset time in local time.
 
-L'anti-spam mémorise le dernier seuil notifié par fenêtre dans `notifyState`. On ne notifie
-que si le seuil franchi est **supérieur** au dernier notifié ; redescendre le baisse
-silencieusement, ce qui réarme la notification en cas de nouveau franchissement (typiquement
-après un reset de fenêtre). Deux notifications distinctes s'ajoutent, chacune une seule fois
-par transition : passage d'une fenêtre à `over_limit`, et passage de `overageInUse` à `true`.
+The anti-spam memorizes the last threshold notified per window in `notifyState`. We only notify
+if the crossed threshold is **higher** than the last notified one; coming back down lowers it
+silently, which rearms the notification in case of a new crossing (typically
+after a window reset). Two distinct notifications are added, each only once
+per transition: a window moving to `over_limit`, and `overageInUse` moving to `true`.
 
-> `overageInUse` est un vestige de l'ancien flux SSE : la réponse réelle de l'API d'usage ne le
-> porte pas, elle a `extra_usage`/`spend` à la place (voir plus haut). Le check reste en place,
-> sans effet, en attendant que ces champs soient câblés dans `evaluate()` de `background.js`.
+> `overageInUse` is a leftover from the old SSE stream: the real response of the usage API does
+> not carry it, it has `extra_usage`/`spend` instead (see above). The check stays in place,
+> without effect, pending those fields being wired into `evaluate()` in `background.js`.
 
-#### Fin de reset
+#### Reset ending
 
-L'inverse des seuils : signaler qu'une fenêtre **repart à zéro**, sans avoir à ouvrir le popup.
-Aucune donnée supplémentaire n'est collectée — `resets_at` et `utilization` sont déjà là.
+The opposite of thresholds: reporting that a window **starts over from zero**, without having to open the popup.
+No additional data is collected — `resets_at` and `utilization` are already there.
 
-`isReset()` exige **deux signaux ensemble**, jamais un seul :
+`isReset()` requires **two signals together**, never just one:
 
-1. `resets_at` a changé depuis le sondage précédent, **et**
-2. l'utilisation est retombée franchement : ancien % > **20**, nouveau % < **la moitié** de
-   l'ancien.
+1. `resets_at` has changed since the previous poll, **and**
+2. utilization has dropped sharply: old % > **20**, new % < **half** of
+   the old one.
 
-Chacun pris isolément produit des faux positifs. Une borne `resets_at` qui bouge de quelques
-secondes sans reset réel n'est pas exclue par l'API — la retenir seule ferait sonner
-l'extension pour rien. Et une chute de pourcentage sans nouvelle borne est une correction de
-mesure, pas une nouvelle fenêtre. Le seuil de moitié plutôt qu'un « ≈ 0 % » absolu laisse
-passer le cas courant où un message est envoyé dans la minute qui suit le reset.
+Each taken in isolation produces false positives. A `resets_at` boundary moving by a few
+seconds without a real reset is not ruled out by the API — keeping it alone would make the
+extension ring for nothing. And a percentage drop without a new boundary is a measurement
+correction, not a new window. The half threshold rather than an absolute "≈ 0 %" lets
+through the common case where a message is sent within the minute following the reset.
 
-S'y ajoute une **garde de fraîcheur** : la comparaison est ignorée si le sondage précédent a
-plus de **10 min** (`RESET_MAX_AGE_MS`). Sans elle, le premier sondage au réveil de Chrome
-annoncerait un reset survenu la veille.
+On top of that there is a **freshness guard**: the comparison is ignored if the previous poll is
+more than **10 min** old (`RESET_MAX_AGE_MS`). Without it, the first poll on Chrome's wake-up
+would announce a reset that happened the day before.
 
-Le point de comparaison est `changes.usage.oldValue` de `storage.onChanged` — la valeur du
-sondage d'avant, lue depuis le storage, donc fiable même après un recyclage du service worker.
-`notifyState.windows.<clé>.notifiedReset` mémorise en plus la dernière borne annoncée : une
-seule notification par reset, même si le même sondage était rejoué.
+The comparison point is `changes.usage.oldValue` from `storage.onChanged` — the value of the
+previous poll, read from storage, hence reliable even after the service worker has been recycled.
+`notifyState.windows.<key>.notifiedReset` additionally memorizes the last announced boundary: a
+single notification per reset, even if the same poll were replayed.
 
-Couvert par [`test-background.js`](test-background.js) (`node test-background.js`), qui exerce
-les trois combinaisons (deux signaux → notifie ; borne seule → non ; chute seule → non), la
-garde de fraîcheur, l'anti-spam et la non-régression des seuils.
+Covered by [`test-background.js`](test-background.js) (`node test-background.js`), which exercises
+the three combinations (two signals → notifies; boundary alone → no; drop alone → no), the
+freshness guard, the anti-spam and threshold non-regression.
 
-L'icône de la notification est encodée en PNG data-URL depuis le même `OffscreenCanvas` que
-l'icône de toolbar — `chrome.notifications` exige un `iconUrl`, et c'est ce qui permet de ne
-livrer aucun binaire dans le dépôt.
+The notification icon is encoded as a PNG data-URL from the same `OffscreenCanvas` as the
+toolbar icon — `chrome.notifications` requires an `iconUrl`, and that is what allows shipping
+no binary in the repo.
 
-### Estimation du temps avant la limite
+### Estimating the time before the limit
 
-Chaque sondage ajoute un point `{ t, u5, u7 }` à `usageHistory` (50 max, les plus anciens
-sont jetés) — soit une série régulière à 1 point/minute, ce qui donne bien plus de sens à
-l'ajustement qu'un point par message envoyé. 50 points couvrent 50 min, la fenêtre
-d'ajustement en utilise 30. Le popup ajuste une **régression linéaire des moindres carrés**
-sur les points des 30 dernières minutes :
+Each poll adds a `{ t, u5, u7 }` point to `usageHistory` (50 max, the oldest ones
+are discarded) — that is a regular series at 1 point/minute, which gives far more meaning to
+the fit than one point per message sent. 50 points cover 50 min, the fitting
+window uses 30 of them. The popup fits a **least-squares linear regression**
+on the points of the last 30 minutes:
 
 ```
-a = Σ(t − t̄)(u − ū) / Σ(t − t̄)²      puis      t(u=1) = t̄ + (1 − ū) / a
+a = Σ(t − t̄)(u − ū) / Σ(t − t̄)²      then      t(u=1) = t̄ + (1 − ū) / a
 ```
 
-Passer par les moyennes évite d'avoir à calculer l'ordonnée à l'origine. Aucune bibliothèque,
-c'est volontairement basique — ça suppose un rythme constant, ce qui est faux dès qu'on fait
-une pause.
+Going through the means avoids having to compute the intercept. No library,
+it is deliberately basic — it assumes a constant rate, which is false as soon as you take
+a break.
 
-La projection ne s'affiche **que** si la pente est positive et que l'échéance tombe **avant
-le reset de la fenêtre** (`windows.5h.resets_at`) : au-delà, le compteur repart de zéro et la
-limite ne sera jamais atteinte. Quand `resets_at` manque ou est déjà passé, un horizon fixe
-de 5 h sert de repli. En dessous de 3 points — donc pendant les 3 premières minutes de
-sondage — le popup affiche « pas assez de données » plutôt qu'un ajustement bancal. À
-l'inverse, une période sans activité donne une pente nulle : la projection disparaît au lieu
-d'annoncer une échéance imaginaire.
+The projection is displayed **only** if the slope is positive and the deadline falls **before
+the window reset** (`windows.5h.resets_at`): beyond that, the counter starts over from zero and the
+limit will never be reached. When `resets_at` is missing or already past, a fixed horizon
+of 5 h serves as a fallback. Below 3 points — hence during the first 3 minutes of
+polling — the popup displays "not enough data" rather than a shaky fit. Conversely,
+a period without activity gives a null slope: the projection disappears instead
+of announcing an imaginary deadline.
 
-### Estimation de contexte
+### Context estimation
 
-**C'est une estimation, pas une mesure.** Le POST vers `/completion` ne contient que le
-nouveau message — l'historique reste côté serveur. La base vient donc du GET de la
-conversation, à laquelle on ajoute à chaud les caractères envoyés puis ceux de la réponse
-streamée ; le total est divisé par 4 pour approcher un nombre de tokens. Un rechargement de
-page resynchronise sur la valeur réelle.
+**It is an estimate, not a measurement.** The POST to `/completion` only contains the
+new message — the history stays on the server side. The baseline therefore comes from the
+conversation GET, to which we add on the fly the characters sent then those of the streamed
+reply; the total is divided by 4 to approximate a token count. Reloading the
+page resynchronizes on the real value.
 
-L'estimation est tenue **par conversation**, sous la clé `ctx:<uuid>` où `<uuid>` vient de
-l'URL `/chat_conversations/<uuid>/completion`. Les 20 conversations les plus récemment mises
-à jour sont conservées, les autres sont supprimées (LRU).
+The estimate is kept **per conversation**, under the `ctx:<uuid>` key where `<uuid>` comes from
+the `/chat_conversations/<uuid>/completion` URL. The 20 most recently updated
+conversations are kept, the others are removed (LRU).
 
-La pastille lit l'UUID de l'**URL de la page**, pas celui des requêtes : passer d'une
-conversation à l'autre sans rechargement met à jour l'affichage, via le patch de
-`pushState` / `replaceState` posé côté MAIN (chaque monde a son propre `History.prototype`,
-patcher depuis le monde isolé n'intercepterait rien). Sans estimation connue pour la
-conversation ouverte, la pastille affiche *contexte non estimé* plutôt qu'un « ~0 tokens »
-trompeur.
+The badge reads the UUID from the **page URL**, not from the requests: moving from one
+conversation to another without a reload updates the display, through the
+`pushState` / `replaceState` patch installed on the MAIN side (each world has its own `History.prototype`,
+patching from the isolated world would intercept nothing). Without a known estimate for the
+open conversation, the badge displays *contexte non estimé* rather than a misleading
+"~0 tokens".
 
-Ne sont pas comptés : les instructions système, les outils, les documents de projet, les
-résultats de recherche web. Le vrai contexte est donc toujours plus grand que ce chiffre.
+Not counted: system instructions, tools, project documents,
+web search results. The real context is therefore always larger than this figure.
 
-### Personnalisation du thème
+### Theme customization
 
-Fonctionnalité à part : `theme.js` ne partage rien avec le reste de l'extension (ni
-`usage-source.js`, ni `background.js`, ni `common.js`), et a ses propres entrées
-`content_scripts` dans le manifest pour pouvoir être retirée d'un bloc. Deux entrées, pas une :
-la seconde vise l'iframe de rendu `a.claude.ai` — voir *Le spinner « plein écran » vit dans une
-iframe* plus bas.
+A separate feature: `theme.js` shares nothing with the rest of the extension (neither
+`usage-source.js`, nor `background.js`, nor `common.js`), and has its own
+`content_scripts` entries in the manifest so it can be removed in one block. Two entries, not one:
+the second targets the `a.claude.ai` rendering iframe — see *The "fullscreen" spinner lives in an
+iframe* below.
 
-Quatre réglages, quatre clés de premier niveau (pas dans l'objet `settings`, réservé aux
-notifications) :
+Four settings, four top-level keys (not in the `settings` object, reserved for
+notifications):
 
-| Clé | Valeurs | Absente = |
+| Key | Values | Absent = |
 | --- | --- | --- |
-| `accentColor` | `"#rrggbb"` | couleur d'origine |
+| `accentColor` | `"#rrggbb"` | original color |
 | `fontWeightPreset` | `"thin"` / `"normal"` / `"bold"` | `"normal"` |
 | `radiusPreset` | `"square"` / `"normal"` / `"round"` | `"normal"` |
-| `fontFamily` | `"sans"` / `"serif"` / `"mono"` | police d'origine |
+| `fontFamily` | `"sans"` / `"serif"` / `"mono"` | original font |
 
-**Un seul point d'injection** : un `<style id="__claude_theme_v1__">` unique porte toutes les
-règles, dans une seule déclaration `:root,html.cds-root,.cds-root{…}`. `"normal"` n'injecte
-rien pour sa partie, et toute valeur hors liste est traitée comme absente — comme `accentValid`
-pour la couleur, puisque le contenu finit concaténé dans du texte CSS.
+**A single injection point**: one `<style id="__claude_theme_v1__">` carries all the
+rules, in a single `:root,html.cds-root,.cds-root{…}` declaration. `"normal"` injects
+nothing for its part, and any value outside the list is treated as absent — like `accentValid`
+for the color, since the content ends up concatenated into CSS text.
 
-**`--font-open-dyslexic` est hors périmètre** : claude.ai pilote déjà cette police nativement
-(Réglages → Apparence → « Chat font » : Default / Match System / Dyslexic Friendly, cf. le
-[centre d'aide](https://support.claude.com/en/articles/8887527-customizing-your-appearance-settings)).
-Le menu de l'extension n'offre donc que sans-serif / serif / monospace.
+**`--font-open-dyslexic` is out of scope**: claude.ai already drives this font natively
+(Settings → Appearance → "Chat font": Default / Match System / Dyslexic Friendly, cf. the
+[help center](https://support.claude.com/en/articles/8887527-customizing-your-appearance-settings)).
+The extension's menu therefore only offers sans-serif / serif / monospace.
 
-#### Couleur d'accent
+#### Accent color
 
-Chaîne de résolution **confirmée par inspection du bouton d'envoi** :
+Resolution chain **confirmed by inspecting the send button**:
 
-| Classe Tailwind | Variable | Alias | Valeur d'origine |
+| Tailwind class | Variable | Alias | Original value |
 | --- | --- | --- | --- |
 | `bg-fill-brand` | `--cds-fill-brand` | `--cds-clay-emphasized` | `#c6613f` |
 | `bg-fill-brand-hover` | `--cds-fill-brand-hover` | `--cds-clay` | `#d97757` |
 
-Ce sont des tokens de base du design system, pas propres à ce bouton : les surcharger repeint
-les autres éléments de marque. `theme.js` ne pose que ces **deux seules** variables pour la
-couleur, en `!important`, sur le sélecteur `:root,html.cds-root,.cds-root` :
+These are base tokens of the design system, not specific to this button: overriding them repaints
+the other brand elements. `theme.js` sets only these **two** variables for the
+color, in `!important`, on the `:root,html.cds-root,.cds-root` selector:
 
-| Sélecteur | Pourquoi |
+| Selector | Why |
 | --- | --- |
-| `:root` | cas où les tokens sont portés par `<html>` |
-| `html.cds-root` | même élément, mais spécificité (0,1,1) > le `.cds-root` (0,1,0) du site |
-| `.cds-root` | si la classe n'est **pas** sur `<html>`, le site pose les tokens sur un élément plus proche du bouton ; entre deux éléments différents la spécificité ne joue pas et notre valeur héritée depuis `:root` perdrait même en `!important` |
+| `:root` | case where the tokens are carried by `<html>` |
+| `html.cds-root` | same element, but specificity (0,1,1) > the site's `.cds-root` (0,1,0) |
+| `.cds-root` | if the class is **not** on `<html>`, the site puts the tokens on an element closer to the button; between two different elements specificity does not apply and our value inherited from `:root` would lose even with `!important` |
 
-Pour savoir dans quel cas on est : `document.querySelector('.cds-root').tagName` dans la console
-de l'onglet claude.ai.
+To know which case you are in: `document.querySelector('.cds-root').tagName` in the claude.ai
+tab's console.
 
-La couleur de survol est calculée en JS : hex → HSL, **+9 points absolus de luminosité**
-(teinte et saturation inchangées), HSL → hex. Le chiffre est calé sur le vrai couple
-`#c6613f` (L 51,2 %) → `#d97757` (L 59,6 %), soit +8,4 points. En absolu et non en relatif :
-un facteur multiplicatif écrase l'écart sur les teintes sombres. Exemples :
-`#c6613f → #d17e62`, `#3f6ac6 → #6285d1`, `#20304f → #2d4470`. Testé par
-`node test-theme.js` (calculs purs) et `node test-theme-dom.js` (ce qui est réellement écrit
-dans un document donné ; jsdom optionnel).
+The hover color is computed in JS: hex → HSL, **+9 absolute lightness points**
+(hue and saturation unchanged), HSL → hex. The figure is calibrated on the real pair
+`#c6613f` (L 51.2 %) → `#d97757` (L 59.6 %), that is +8.4 points. In absolute and not relative terms:
+a multiplicative factor crushes the gap on dark hues. Examples:
+`#c6613f → #d17e62`, `#3f6ac6 → #6285d1`, `#20304f → #2d4470`. Tested by
+`node test-theme.js` (pure computations) and `node test-theme-dom.js` (what is actually written
+in a given document; jsdom optional).
 
-##### ⚠️ Le contrôle du popup n'est pas un `<input type="color">`, et ne doit pas le redevenir
+##### Warning: the popup control is not an `<input type="color">`, and must not become one again
 
-Huit pastilles cliquables plus un champ hexadécimal libre, pas le sélecteur natif : sur Firefox,
-celui-ci s'ouvre en **fenêtre séparée**, et l'ouverture d'une fenêtre **tue le popup ancré**
-avant même que l'utilisateur ait choisi une couleur ([bug Mozilla
-1292701](https://bugzilla.mozilla.org/show_bug.cgi?id=1292701), toujours ouvert). Le
-raisonnement complet et les options écartées sont dans *Portage Firefox* → [Le sélecteur de
-couleur natif tue le popup](#le-sélecteur-de-couleur-natif-tue-le-popup-firefox). Deux
-conséquences pour qui touche à `renderTheme()` :
+Eight clickable swatches plus a free hexadecimal field, not the native picker: on Firefox,
+the latter opens in a **separate window**, and opening a window **kills the anchored popup**
+before the user has even chosen a color ([Mozilla bug
+1292701](https://bugzilla.mozilla.org/show_bug.cgi?id=1292701), still open). The
+full reasoning and the rejected options are in *Firefox port* → [The native color
+picker kills the popup](#the-native-color-picker-kills-the-popup-firefox). Two
+consequences for anyone touching `renderTheme()`:
 
-- le champ hexadécimal écrit sur `input`, dès que la saisie forme un `#rrggbb` complet, mais
-  **ne réécrit pas le champ** à ce moment-là : le normaliser pendant la frappe déplacerait le
-  curseur et corrigerait la casse tapée. La forme canonique n'est remise qu'à la sortie du
-  champ, ce qui rattrape aussi une saisie restée incomplète ;
-- **le rendu n'écrit rien.** Une couleur absente s'affiche par défaut sans être stockée, sinon
-  ouvrir le popup recréerait la clé que « Réinitialiser » vient de supprimer.
+- the hexadecimal field writes on `input`, as soon as the input forms a complete `#rrggbb`, but
+  **does not rewrite the field** at that moment: normalizing it while typing would move the
+  caret and correct the typed case. The canonical form is only restored on field blur,
+  which also recovers an input left incomplete;
+- **the render writes nothing.** A missing color is displayed by default without being stored, otherwise
+  opening the popup would recreate the key « Réinitialiser » has just removed.
 
-Testé par `node test-popup-accent.js` (DOM bouchonné en dur, sans jsdom : `renderTheme()` ne se
-sert que de sept méthodes).
+Tested by `node test-popup-accent.js` (hard-stubbed DOM, without jsdom: `renderTheme()` only
+uses seven methods).
 
-#### Poids, coins/ombres, police : dérivés des valeurs d'origine
+#### Weight, corners/shadows, font: derived from the original values
 
-Ces trois réglages ne posent **aucune valeur en dur** : ils lisent les tokens du site à
-l'exécution (`getComputedStyle`) et les transforment. Une variable illisible ou de format
-inattendu n'est simplement pas surchargée, avec un `console.warn` qui la nomme.
+These three settings set **no hard-coded value**: they read the site's tokens at
+runtime (`getComputedStyle`) and transform them. A variable that is unreadable or of an
+unexpected format is simply not overridden, with a `console.warn` naming it.
 
-| Constante | Valeur | Pourquoi |
+| Constant | Value | Why |
 | --- | --- | --- |
-| `THEME_WEIGHT_DELTA` | ±100 | un cran de la graduation CSS sur les 4 `--cds-font-weight-*` : visible sans casser la hiérarchie regular/bold |
-| `THEME_RADIUS_FACTOR` | ×1,5 | au-delà, les petits contrôles deviennent des gélules |
-| `THEME_SHADOW_LENGTH_FACTOR` | ×1,2 | des coins plus ronds paraissent plus plats sans ombres un peu plus marquées |
-| `THEME_SHADOW_ALPHA_FACTOR` | ×1,15 | idem, borné à 1 |
+| `THEME_WEIGHT_DELTA` | ±100 | one step of the CSS scale on the 4 `--cds-font-weight-*`: visible without breaking the regular/bold hierarchy |
+| `THEME_RADIUS_FACTOR` | ×1.5 | beyond that, the small controls become pills |
+| `THEME_SHADOW_LENGTH_FACTOR` | ×1.2 | rounder corners look flatter without slightly stronger shadows |
+| `THEME_SHADOW_ALPHA_FACTOR` | ×1.15 | same, clamped to 1 |
 
-`themeScaleShadow()` traite `--cds-shadow-{sm,md,lg}` par remplacement regex, sans découper les
-couches ni les positions : **les décalages grandissent donc des mêmes 20 % que le flou.**
-Simplification assumée — visuellement subtile, et ça évite un parseur `box-shadow` complet pour
-un format qu'on ne maîtrise pas. Une couleur dont l'alpha n'est pas extractible (`oklch(… / .05)`,
-alpha en `%`) laisse l'ombre **intacte** plutôt que d'inventer une valeur. « Carré » ne calcule
-rien : `--cds-radius: 0` et les trois ombres à `none`.
+`themeScaleShadow()` processes `--cds-shadow-{sm,md,lg}` by regex replacement, without splitting the
+layers or the positions: **the offsets therefore grow by the same 20 % as the blur.**
+An accepted simplification — visually subtle, and it avoids a full `box-shadow` parser for
+a format we do not control. A color whose alpha is not extractable (`oklch(… / .05)`,
+alpha in `%`) leaves the shadow **intact** rather than inventing a value. "Carré" computes
+nothing: `--cds-radius: 0` and the three shadows at `none`.
 
-Pour la police, on **alias** la variable cible sur une pile que le site définit déjà —
-`<var cible>: var(--font-anthropic-serif)` — plutôt que de coder des piles en dur. La variable
-cible est trouvée à l'exécution par `themeDetectFontVar()` : celle des trois `--font-anthropic-*`
-dont la valeur correspond au `font-family` calculé de `document.body`. Aucune correspondance →
-warn et réglage sans effet, pas de cible devinée.
+For the font, we **alias** the target variable onto a stack the site already defines —
+`<target var>: var(--font-anthropic-serif)` — rather than hard-coding stacks. The target
+variable is found at runtime by `themeDetectFontVar()`: the one of the three `--font-anthropic-*`
+whose value matches the computed `font-family` of `document.body`. No match →
+warn and the setting has no effect, no guessed target.
 
-⚠️ **La capture des valeurs d'origine est mémoïsée une seule fois** (`themeCaptureOriginals`),
-et tous les réglages qui écrivent ces variables attendent qu'elle ait réussi. Sans ça, notre
-propre feuille en `!important` polluerait la lecture suivante : le rayon serait multiplié par
-1,5 **en cascade** à chaque changement de préréglage, et la pile de police aliasée ne serait
-plus détectable. C'est aussi pourquoi « Carré » et la police attendent la capture alors que leur
-calcul n'en a pas besoin.
+Warning: **the capture of the original values is memoized once only** (`themeCaptureOriginals`),
+and every setting that writes those variables waits for it to have succeeded. Without that, our
+own `!important` sheet would pollute the next read: the radius would be multiplied by
+1.5 **in cascade** on each preset change, and the aliased font stack would no longer
+be detectable. That is also why "Carré" and the font wait for the capture although their
+computation does not need it.
 
-À `document_start` les feuilles du site ne sont pas encore parsées et tout revient vide : la
-capture renvoie `null` **sans mémoïser**, et `theme.js` retente sur `DOMContentLoaded` puis à
-100/300/800/1500/3000 ms. Passé ce délai, un warn nomme ce qui reste introuvable.
+At `document_start` the site's sheets are not parsed yet and everything comes back empty: the
+capture returns `null` **without memoizing**, and `theme.js` retries on `DOMContentLoaded` then at
+100/300/800/1500/3000 ms. Past that delay, a warn names what remains not found.
 
 #### Propagation
 
-**Le popup n'envoie rien aux onglets** : il écrit ou supprime les quatre clés, et chaque onglet
-réagit via `chrome.storage.onChanged` en **relisant les quatre** (un `remove` groupé produit
-alors un seul rendu cohérent). Tous les onglets claude.ai ouverts changent donc ensemble, sans
-rechargement, sans passer par `chrome.scripting` ni `chrome.tabs`. « Réinitialiser » supprime les quatre clés,
-ce qui **retire** l'élément `<style>` au lieu de le vider — le thème d'origine redevient
-exactement ce qu'il était.
+**The popup sends nothing to the tabs**: it writes or removes the four keys, and each tab
+reacts through `chrome.storage.onChanged` by **rereading all four** (a grouped `remove` then produces
+a single coherent render). All open claude.ai tabs therefore change together, without
+a reload, without going through `chrome.scripting` or `chrome.tabs`. « Réinitialiser » removes the four keys,
+which **removes** the `<style>` element instead of emptying it — the original theme becomes
+exactly what it was.
 
-##### ⏳ Propagation intermittente pendant une génération — en cours de diagnostic
+##### Pending: intermittent propagation during a generation — under diagnosis
 
-Symptôme signalé : un changement de couleur propagé depuis un autre onglet **échoue plus
-souvent** quand une génération de réponse est en cours dans l'onglet cible. **Cause non
-confirmée à ce jour** — cette section décrit l'instrumentation en place, pas un correctif.
+Reported symptom: a color change propagated from another tab **fails more
+often** when a reply generation is in progress in the target tab. **Cause not
+confirmed to this day** — this section describes the instrumentation in place, not a fix.
 
-⚠️ **Le premier point de mesure était faux, et orientait vers la mauvaise moitié du problème.**
-Le log `[theme] etat lu` était verrouillé par une variable `themeFirstLoad` : il ne s'imprimait
-**qu'une fois par frame**, au chargement de la page. Le voir dans la console d'un onglet qui ne
-se met pas à jour ne prouvait donc **rien** sur `storage.onChanged` — c'était le log du
-chargement initial, et on en concluait à tort que le listener s'était déclenché et que le
-problème était forcément en aval. Le log nomme désormais sa cause
-(`chargement initial` / `storage.onChanged`) et s'imprime à **chaque** lecture. Leçon générale :
-un point de mesure dont la portée est plus étroite qu'elle n'en a l'air est pire que pas de
-point de mesure, parce qu'il produit une conclusion au lieu d'un silence.
+Warning: **the first measurement point was wrong, and pointed at the wrong half of the problem.**
+The `[theme] state read` log was locked by a `themeFirstLoad` variable: it only printed
+**once per frame**, at page load. Seeing it in the console of a tab that does not
+update therefore proved **nothing** about `storage.onChanged` — it was the log of the
+initial load, and we wrongly concluded the listener had fired and that the
+problem was necessarily downstream. The log now names its cause
+(`initial load` / `storage.onChanged`) and prints on **every** read. General lesson:
+a measurement point whose scope is narrower than it looks is worse than no
+measurement point, because it produces a conclusion instead of a silence.
 
-Deux instruments, tous deux marqués `TEMPORAIRE` :
+Two instruments, both marked `TEMPORARY`:
 
-| Log | Ce qu'il dit |
+| Log | What it says |
 | --- | --- |
-| `[theme] etat lu (<cause>) — accent=… poids=… rayon=… police=…` | une lecture du storage a eu lieu, et **pourquoi** |
-| `[theme] audit — demande=… calcule=… concordant=… attachee=…` | ce que le navigateur applique **réellement**, juste après l'écriture |
-| `[theme] balise RETIREE du DOM à <ISO> (t+… ms)` | le site a retiré notre `<style>`, avec l'horodatage |
+| `[theme] state read (<cause>) — accent=… weight=… radius=… font=…` | a storage read happened, and **why** |
+| `[theme] audit — requested=… computed=… matches=… attached=…` | what the browser **actually** applies, just after the write |
+| `[theme] tag REMOVED from the DOM at <ISO> (t+… ms)` | the site removed our `<style>`, with the timestamp |
 
-Les trois sont des **lignes de texte plates, pas des objets** : la console de Chrome affiche les
-objets repliés et tronqués, et ils se copient mal. Ces logs sont faits pour être relevés à la
-main et recollés tels quels dans un rapport, donc leur lisibilité brute prime sur leur structure.
-Un test le fige (`assert` qu'aucune accolade n'apparaît dans l'audit).
+All three are **flat lines of text, not objects**: Chrome's console shows
+objects collapsed and truncated, and they copy badly. These logs are made to be picked up by
+hand and pasted as-is into a report, so their raw readability takes precedence over their structure.
+A test freezes this (`assert` that no brace appears in the audit).
 
-L'audit est la ligne qui tranche, parce qu'il relit la valeur **calculée** de
-`--cds-clay-emphasized` au lieu de faire confiance à ce qu'on croit avoir écrit :
+The audit is the line that decides, because it rereads the **computed** value of
+`--cds-clay-emphasized` instead of trusting what we think we wrote:
 
-| `concordant` | `attachee` | Lecture |
+| `matches` | `attached` | Reading |
 | --- | --- | --- |
-| `NON` | `NON` | la balise a été **retirée** → hypothèse « re-rendu du site pendant le streaming » |
-| `NON` | `oui` | balise en place mais **une règle plus spécifique gagne** → chercher une classe temporaire posée sur `.cds-root` pendant la génération |
-| `OUI` | `oui` | le navigateur applique bien la couleur : le problème n'est ni dans `themeRender` ni dans le CSS |
+| `NO` | `NO` | the tag was **removed** → hypothesis "site re-render during streaming" |
+| `NO` | `yes` | tag in place but **a more specific rule wins** → look for a temporary class put on `.cds-root` during the generation |
+| `YES` | `yes` | the browser is indeed applying the color: the problem is neither in `themeRender` nor in the CSS |
 
-⚠️ **Ordre obligatoire avant tout relevé** : recharger l'**extension** depuis
-`chrome://extensions`, *puis* faire F5 sur les onglets. Un onglet ouvert avant le rechargement de
-l'extension n'a plus de content script du tout, et un onglet rechargé avant elle exécute encore
-l'ancien code — dans les deux cas ces logs sont absents, ce qui se lit à tort comme « la
-propagation n'a rien déclenché ».
+Warning: **mandatory order before any measurement**: reload the **extension** from
+`chrome://extensions`, *then* press F5 on the tabs. A tab opened before the extension was reloaded
+has no content script at all anymore, and a tab reloaded before it still runs
+the old code — in both cases these logs are absent, which wrongly reads as "the
+propagation triggered nothing".
 
-Lire `--cds-clay-emphasized` ici est sans effet de bord : cette variable n'appartient à aucune
-des quatre listes capturées par `themeCaptureOriginals()`, elle ne peut donc pas polluer sa
-mémoïsation.
+Reading `--cds-clay-emphasized` here has no side effect: this variable belongs to none
+of the four lists captured by `themeCaptureOriginals()`, so it cannot pollute its
+memoization.
 
-**La porte de correction est déjà écrite mais fermée** : `THEME_REINJECT`, à `false`. À `true`,
-l'observateur passe de constat à correctif et repose la balise immédiatement après chaque
-retrait, au lieu d'attendre le prochain `storage.onChanged`. Elle n'est **pas** ouverte par
-défaut, parce que la première hypothèse n'est pas confirmée et qu'ouvrir une porte pour une
-cause supposée masquerait le vrai symptôme au lieu de le résoudre. Les deux états sont testés :
-fermé, le retrait est constaté sans réparation ; ouvert, la balise revient.
+**The fix gate is already written but closed**: `THEME_REINJECT`, at `false`. At `true`,
+the observer goes from observation to fix and puts the tag back immediately after each
+removal, instead of waiting for the next `storage.onChanged`. It is **not** open by
+default, because the first hypothesis is not confirmed and opening a gate for a
+supposed cause would mask the real symptom instead of solving it. Both states are tested:
+closed, the removal is observed without repair; open, the tag comes back.
 
-⚠️ L'observateur lui-même est testé, et ce n'est pas du zèle : **un observateur muet parce que
-cassé se lirait exactement comme « hypothèse infirmée »**. C'est le même contresens que celui du
-log ci-dessus. `test-theme-dom.js` vérifie donc qu'un retrait réel déclenche bien le message.
+Warning: the observer itself is tested, and that is not overzealousness: **an observer mute because
+it is broken would read exactly like "hypothesis disproved"**. It is the same misreading as that of the
+log above. `test-theme-dom.js` therefore checks that a real removal does trigger the message.
 
-L'observateur surveille `<html>` et `<head>` en `childList` **sans** `subtree` : ce sont les deux
-seuls endroits où la balise peut vivre, et pendant un streaming l'arbre entier mute en continu —
-un `subtree` coûterait cher pour surveiller un nœud unique.
+The observer watches `<html>` and `<head>` in `childList` **without** `subtree`: those are the only two
+places where the tag can live, and during streaming the whole tree mutates continuously —
+a `subtree` would be expensive to watch a single node.
 
-⚠️ **Si un élément de marque ne change pas de couleur**, ne pas ajouter de variable au
-hasard : inspecter cet élément précis pour confirmer sa vraie chaîne de résolution, comme
-cela a été fait pour le bouton d'envoi. Les variables de fond (`--_gray-*`,
-`--cds-hsl-gray-*`, `--cds-oncolor-*`), celles de texte, ainsi que `--_brand-clay` et
-`--cds-hsl-clay` sont **hors périmètre** — ces deux dernières n'apparaissent pas dans la
-chaîne confirmée ci-dessus.
+Warning: **if a brand element does not change color**, do not add a variable at
+random: inspect that precise element to confirm its real resolution chain, as
+was done for the send button. The background variables (`--_gray-*`,
+`--cds-hsl-gray-*`, `--cds-oncolor-*`), the text ones, as well as `--_brand-clay` and
+`--cds-hsl-clay` are **out of scope** — the last two do not appear in the
+confirmed chain above.
 
-#### Le spinner « plein écran » vit dans une iframe, sur un autre domaine
+#### The "fullscreen" spinner lives in an iframe, on another domain
 
-Le gros astérisque isolé, affiché juste après l'envoi d'un message avant que le texte de la
-réponse apparaisse, ne suivait pas la couleur personnalisée — alors que le spinner **compact**
-(petite icône + texte de statut), lui, la suivait déjà. Diagnostic **confirmé par inspection** :
-ce sont deux éléments différents, dans deux documents différents.
+The large isolated asterisk, shown right after sending a message before the reply text
+appears, did not follow the customized color — while the **compact** spinner
+(small icon + status text) already did. Diagnosis **confirmed by inspection**:
+they are two different elements, in two different documents.
 
-| | Spinner compact | Spinner plein écran |
+| | Compact spinner | Fullscreen spinner |
 | --- | --- | --- |
-| Où | document principal `claude.ai` | iframe `https://a.claude.ai/isolated-segment.html` |
-| Quoi | `<svg fill="…">` référençant `--cds-clay` / `--cds-clay-emphasized` | rendu dans un document séparé, cross-origin |
-| Pourquoi il suivait / ne suivait pas | `theme.js` s'exécute dans ce document | `theme.js` ne s'y exécutait **jamais** |
+| Where | main `claude.ai` document | `https://a.claude.ai/isolated-segment.html` iframe |
+| What | `<svg fill="…">` referencing `--cds-clay` / `--cds-clay-emphasized` | rendered in a separate, cross-origin document |
+| Why it followed / did not follow | `theme.js` runs in that document | `theme.js` **never** ran there |
 
-Ce n'était donc **pas** une variable CSS de plus à surcharger — la piste par défaut, et la
-mauvaise. La chaîne `--cds-clay*` était la bonne depuis le début ; elle n'était simplement pas
-appliquée dans ce document-là.
+So it was **not** one more CSS variable to override — the default lead, and the
+wrong one. The `--cds-clay*` chain was the right one from the start; it simply was not
+applied in that document.
 
-⚠️ **Le domaine était déjà couvert ; ce qui manquait, c'est `all_frames`.** Les `matches` du
-manifest utilisent `https://*.claude.ai/*`, qui inclut déjà `a.claude.ai`. Mais `all_frames`
-vaut **`false` par défaut** : un content script ne tourne que dans le frame principal. L'iframe
-étant un sous-frame, `theme.js` n'y était jamais injecté. D'où une entrée dédiée :
+Warning: **the domain was already covered; what was missing is `all_frames`.** The manifest's
+`matches` use `https://*.claude.ai/*`, which already includes `a.claude.ai`. But `all_frames`
+defaults to **`false`**: a content script only runs in the main frame. Since the iframe
+is a sub-frame, `theme.js` was never injected there. Hence a dedicated entry:
 
 ```json
 { "matches": ["https://a.claude.ai/*"], "js": ["theme.js"],
   "run_at": "document_start", "all_frames": true }
 ```
 
-Elle est **dédiée** plutôt que `all_frames: true` posé sur l'entrée `claude.ai` existante : ça
-injecterait aussi `theme.js` dans *tous* les autres iframes du site (rendus d'artefacts compris),
-où il n'a rien à faire. L'entrée existante porte en contrepartie
-`"exclude_matches": ["https://a.claude.ai/*"]`, pour que les deux jeux soient **disjoints** : sans
-ça, une navigation de premier niveau vers `a.claude.ai` exécuterait `theme.js` deux fois dans le
-même monde isolé (listener `storage.onChanged` en double). `host_permissions` couvrait déjà le
-sous-domaine (`https://*.claude.ai/*`) : **rien à y changer**.
+It is **dedicated** rather than `all_frames: true` put on the existing `claude.ai` entry: that
+would also inject `theme.js` into *all* the site's other iframes (artifact renders included),
+where it has no business. The existing entry carries in exchange
+`"exclude_matches": ["https://a.claude.ai/*"]`, so the two sets are **disjoint**: without
+that, a top-level navigation to `a.claude.ai` would run `theme.js` twice in the
+same isolated world (duplicate `storage.onChanged` listener). `host_permissions` already covered the
+subdomain (`https://*.claude.ai/*`): **nothing to change there**.
 
-**Seul `theme.js` atteint cette iframe.** Les autres modules (`inject.js`, `content.js`,
-`autocontinue.js`, `folders.js`, `export.js`) gardent `all_frames` à `false` et n'ont donc aucun
-moyen de s'y exécuter, bien que leur `https://*.claude.ai/*` corresponde au domaine. Côté
-injection programmatique, `chrome.scripting.executeScript` d'`autocontinue-bg.js` ne passe pas
-`allFrames` non plus, et ne vise donc que le frame principal. Une iframe de rendu de contenu n'a
-ni sidebar, ni en-tête, ni bouton *Continue* : rien à y faire.
+**Only `theme.js` reaches this iframe.** The other modules (`inject.js`, `content.js`,
+`autocontinue.js`, `folders.js`, `export.js`) keep `all_frames` at `false` and therefore have no
+way to run there, although their `https://*.claude.ai/*` matches the domain. On the
+programmatic injection side, `autocontinue-bg.js`'s `chrome.scripting.executeScript` does not pass
+`allFrames` either, and therefore only targets the main frame. A content rendering iframe has
+neither sidebar, nor header, nor *Continue* button: nothing to do there.
 
-⚠️ **Cette entrée est nommément couplée à `a.claude.ai`** — c'est la seule du manifest qui
-dépende d'un nom de domaine précis plutôt que du joker `*.claude.ai`. Si Anthropic renomme ou
-déplace ce sous-domaine de rendu, le spinner plein écran cessera silencieusement de suivre la
-couleur, **sans aucun message d'erreur** : côté page principale tout continuera de marcher. Le
-symptôme à reconnaître est exactement celui d'origine — compact coloré, plein écran non coloré.
-La vérification est alors d'inspecter l'iframe pour relever son nouveau domaine et de mettre à
-jour les deux endroits (`matches` de l'entrée dédiée **et** `exclude_matches` de l'autre).
+Warning: **this entry is coupled by name to `a.claude.ai`** — it is the only one in the manifest that
+depends on a precise domain name rather than the `*.claude.ai` wildcard. If Anthropic renames or
+moves this rendering subdomain, the fullscreen spinner will silently stop following the
+color, **without any error message**: on the main page side everything will keep working. The
+symptom to recognize is exactly the original one — compact colored, fullscreen not colored.
+The check is then to inspect the iframe to collect its new domain and to update
+both places (the dedicated entry's `matches` **and** the other's `exclude_matches`).
 
-`theme.js` n'a eu **aucune modification à subir** pour ce contexte réduit : ses gardes
-existantes suffisent déjà. L'accent ne dépend d'aucune valeur d'origine, il s'écrit donc même
-dans un document sans tokens `--cds-*` ; les trois réglages dérivés sont gardés par `&& orig` et
-ne s'appliquent que si la capture a réussi ; un document encore sans `<body>` fait renvoyer
-`null` à la capture, sans mémoïser. C'est ce que verrouille
-[`test-theme-dom.js`](test-theme-dom.js) (7 tests, jsdom optionnel comme les autres harnais DOM).
+`theme.js` needed **no modification** for this reduced context: its existing
+guards are already enough. The accent depends on no original value, so it is written even
+in a document without `--cds-*` tokens; the three derived settings are guarded by `&& orig` and
+only apply if the capture succeeded; a document still without a `<body>` makes the capture return
+`null`, without memoizing. That is what
+[`test-theme-dom.js`](test-theme-dom.js) locks down (7 tests, jsdom optional like the other DOM harnesses).
 
-Si le spinner reste non coloré malgré cette entrée, **ne pas deviner une variable de plus** :
-ça voudra dire qu'un autre obstacle existe dans cette iframe (une CSP de sandbox qui refuse
-aussi le `<style>` injecté, par exemple), et c'est *lui* qu'il faudra inspecter.
+If the spinner stays uncolored despite this entry, **do not guess one more variable**:
+it will mean another obstacle exists in that iframe (a sandbox CSP that also refuses
+the injected `<style>`, for instance), and it is *that* which will need inspecting.
 
 ### Auto-continue
 
-Quatrième fonctionnalité indépendante : quand une réponse bute sur la **limite de tool-use**,
-claude.ai affiche un bouton *Continue* qu'il faut cliquer à la main. `autocontinue.js` le fait
-à votre place. **Désactivée par défaut**, réglages dans le popup.
+A fourth independent feature: when a reply hits the **tool-use limit**,
+claude.ai displays a *Continue* button that must be clicked by hand. `autocontinue.js` does it
+for you. **Disabled by default**, settings in the popup.
 
-Rien de commun avec `usage-source.js`, `status-source.js` ni `theme.js` : quatre clés dédiées,
-sa propre entrée `content_scripts`, et deux `importScripts` isolés en tête de `background.js`
-— c'est tout son ancrage, les retirer supprime la fonctionnalité.
+Nothing in common with `usage-source.js`, `status-source.js` or `theme.js`: four dedicated keys,
+its own `content_scripts` entry, and two isolated `importScripts` at the top of `background.js`
+— that is its entire anchoring, removing them deletes the feature.
 
-| Clé | Valeurs | Absente = |
+| Key | Values | Absent = |
 | --- | --- | --- |
-| `autoContinueEnabled` | `true` / `false` | désactivé |
-| `autoContinueMaxCount` | `1`-`999`, ou `0` | `0` = illimité |
-| `autoContinueCount` | entier ≥ 0 | `0` |
-| `autoContinuePaused` | `true` / `false` | pas en pause |
+| `autoContinueEnabled` | `true` / `false` | disabled |
+| `autoContinueMaxCount` | `1`-`999`, or `0` | `0` = unlimited |
+| `autoContinueCount` | integer ≥ 0 | `0` |
+| `autoContinuePaused` | `true` / `false` | not paused |
 
-Adaptation dans [`autocontinue-source.js`](autocontinue-source.js) — logique **pure**, aucun
-DOM, aucun `chrome.*` : c'est ce qui la rend testable telle quelle
-(`node test-autocontinue.js`). Les sélecteurs DOM, eux, sont en tête de
-[`autocontinue.js`](autocontinue.js), couvert par `node test-autocontinue-dom.js` sur un DOM
-bouchonné.
+Adaptation in [`autocontinue-source.js`](autocontinue-source.js) — **pure** logic, no
+DOM, no `chrome.*`: that is what makes it testable as-is
+(`node test-autocontinue.js`). The DOM selectors, for their part, are at the top of
+[`autocontinue.js`](autocontinue.js), covered by `node test-autocontinue-dom.js` on a stubbed
+DOM.
 
-#### Deux conditions cumulées
+#### Two cumulative conditions
 
-La détection n'agit **jamais** sur un seul signal :
+Detection **never** acts on a single signal:
 
-1. un bouton *Continue* **visible** dans le DOM — un message qui parle de la limite sans
-   bouton veut dire que la réponse est finie, il n'y a rien à continuer ;
-2. une des six phrases caractéristiques dans le **dernier** message de l'assistant, et
-   **nulle part ailleurs** dans la conversation.
+1. a **visible** *Continue* button in the DOM — a message that mentions the limit without a
+   button means the reply is finished, there is nothing to continue;
+2. one of the six characteristic phrases in the **last** assistant message, and
+   **nowhere else** in the conversation.
 
-La seconde moitié du point 2 est le garde-fou anti-faux-positif : une conversation dont le
-*sujet* est la limite de tool-use répète la phrase de message en message et s'auto-continuerait
-sans fin. Les six variantes (`tool-use limit`, `tool use limit`, `reached its tool`,
-`exhausted the tool`, `tool call limit`, `continuation needed`) viennent de
-[claude-autocontinue](https://github.com/timothy22000/claude-autocontinue) (MIT), qui les a
-relevées sur des messages réels ; elles sont comparées en minuscules et **en sous-chaîne**, la
-formulation autour changeant. Aucune variante française n'est codée : aucune n'a été capturée,
-et ce dépôt n'écrit pas de valeur devinée (même règle que `ORGS_PATH`).
+The second half of point 2 is the anti-false-positive guard: a conversation whose
+*subject* is the tool-use limit repeats the phrase from message to message and would auto-continue
+itself endlessly. The six variants (`tool-use limit`, `tool use limit`, `reached its tool`,
+`exhausted the tool`, `tool call limit`, `continuation needed`) come from
+[claude-autocontinue](https://github.com/timothy22000/claude-autocontinue) (MIT), which collected
+them on real messages; they are compared in lowercase and **as substrings**, since the
+surrounding wording changes. No French variant is hard-coded: none has been captured,
+and this repo does not write a guessed value (same rule as `ORGS_PATH`).
 
-#### Deux déclencheurs, un seul chemin
+#### Two triggers, one single path
 
-| Déclencheur | Où | Latence | Angle mort |
+| Trigger | Where | Latency | Blind spot |
 | --- | --- | --- | --- |
-| `MutationObserver` (débounce 600 ms d'accalmie) | `autocontinue.js`, page | quasi instantanée | ses `setTimeout` sont **bridés** dès que l'onglet passe en arrière-plan (1 s min, puis 1/min après 5 min caché) |
-| sondage `chrome.scripting.executeScript` | `autocontinue-bg.js`, service worker | ≤ 5 s | onglet sans content script (ouvert avant l'installation) |
+| `MutationObserver` (600 ms lull debounce) | `autocontinue.js`, page | near-instant | its `setTimeout` are **throttled** as soon as the tab goes to the background (1 s min, then 1/min after 5 min hidden) |
+| `chrome.scripting.executeScript` polling | `autocontinue-bg.js`, service worker | ≤ 5 s | tab without a content script (opened before installation) |
 
-Les deux appellent **la même** fonction `acTick()`, dans le monde isolé de l'onglet. Le
-verrou `acBusy` et le délai de garde de 5 s qu'elle porte rendent donc le double-clic
-impossible **par construction** : il n'y a qu'un détecteur, réveillé de deux façons — pas de
-protocole de réservation entre le worker et la page. C'est ce que verrouille le test
-*deux ticks simultanés (worker + page) : un seul clic*. C'est aussi pour ça que `autocontinue.js`
-n'est **pas** dans une IIFE : le worker injecte une fonction qui appelle `acTick()`, le nom
-doit être visible depuis le global du monde isolé (même contrainte que `theme.js`).
+Both call **the same** `acTick()` function, in the tab's isolated world. The
+`acBusy` lock and the 5 s guard delay it carries therefore make the double click
+impossible **by construction**: there is only one detector, woken in two ways — no
+reservation protocol between the worker and the page. That is what the test
+*two simultaneous ticks (worker + page): a single click* locks down. It is also why `autocontinue.js`
+is **not** in an IIFE: the worker injects a function that calls `acTick()`, so the name
+must be visible from the isolated world's global scope (same constraint as `theme.js`).
 
-`chrome.alarms` a un plancher d'une minute, bien trop lent pour une continuation : l'alarme
-`autocontinue-poll` ne sert qu'à **ressusciter** le worker, la cadence de 5 s vient d'un
-`setInterval` qui ne vit que tant que le worker vit. Chaque `executeScript` repousse la mise en
-veille, donc la boucle s'auto-entretient tant qu'il y a un onglet claude.ai. Elle n'est démarrée
-que si l'auto-continue est **actif, non en pause et sous son maximum** : désactivé, l'extension
-ne maintient rien en vie.
+`chrome.alarms` has a one-minute floor, far too slow for a continuation: the
+`autocontinue-poll` alarm only serves to **resurrect** the worker, the 5 s cadence comes from a
+`setInterval` that only lives as long as the worker lives. Each `executeScript` pushes the sleep
+back, so the loop is self-sustaining as long as there is a claude.ai tab. It is only started
+if auto-continue is **active, not paused and under its maximum**: disabled, the extension
+keeps nothing alive.
 
-#### `autoContinueMaxCount` : 0 signifie *illimité*
+#### `autoContinueMaxCount`: 0 means *unlimited*
 
-Sans ambiguïté et **partout** — popup, page, service worker. Ce n'est pas une sentinelle
-arbitraire : c'est aussi ce que rend `acSettings()` quand la clé manque, vaut `null` ou est
-aberrante. Un maximum jamais configuré n'interdit donc **jamais** de continuer, ce qui est le
-comportement voulu pour un réglage absent.
+Unambiguously and **everywhere** — popup, page, service worker. It is not an arbitrary
+sentinel: it is also what `acSettings()` returns when the key is missing, is `null` or is
+nonsensical. A maximum never configured therefore **never** forbids continuing, which is the
+intended behavior for a missing setting.
 
-L'alternative — `0` = « aucune continuation autorisée » — aurait imposé une autre valeur pour
-« illimité » (`-1`, `null`) et transformé une clé absente en blocage silencieux.
+The alternative — `0` = "no continuation allowed" — would have required another value for
+"unlimited" (`-1`, `null`) and turned a missing key into a silent block.
 
-⚠️ Corollaire non négociable : une comparaison `count >= maxCount` **nue** bloquerait dès le
-premier appel quand `maxCount` vaut 0. Le court-circuit sur `AC_UNLIMITED` doit donc passer
-**avant** la comparaison, et il n'existe qu'un seul endroit dans le dépôt où cette comparaison a
-le droit de vivre : `acMaxReached()`.
+Warning: non-negotiable corollary: a **bare** `count >= maxCount` comparison would block from the
+first call when `maxCount` is 0. The short-circuit on `AC_UNLIMITED` must therefore come
+**before** the comparison, and there is only one place in the repo where that comparison is
+allowed to live: `acMaxReached()`.
 
-`autoContinueCount` absent et `autoContinueCount = 0` se comportent **strictement pareil**
-(`Number(undefined)` vaut `NaN`, que le test `isFinite` écarte). Le popup écrit quand même les
-quatre clés à l'activation, mais uniquement pour que le storage se lise sans ambiguïté à la
-main — pas pour corriger un comportement. Cinq tests fixent ce contrat, dont l'état exact relevé
-en usage réel.
+`autoContinueCount` missing and `autoContinueCount = 0` behave **strictly the same**
+(`Number(undefined)` is `NaN`, which the `isFinite` test discards). The popup writes the
+four keys anyway on activation, but only so that storage reads unambiguously by
+hand — not to fix a behavior. Five tests fix this contract, including the exact state observed
+in real use.
 
-#### Compteur et notification
+#### Counter and notification
 
-Chaque continuation incrémente `autoContinueCount` et affiche un **toast dans la page**
-(bas-droite, au-dessus de la pastille de contexte, 4 s) — pas une `chrome.notifications` : une
-continuation est un événement de la conversation qu'on est en train de lire, pas une alerte
-système. Le popup montre `3 / 10 continuations déclenchées`, avec « Réinitialiser » pour
-remettre le compteur à zéro et « Pause » pour suspendre **sans toucher aux réglages**.
+Each continuation increments `autoContinueCount` and shows a **toast in the page**
+(bottom-right, above the context badge, 4 s) — not a `chrome.notifications`: a
+continuation is an event of the conversation you are currently reading, not a system
+alert. The popup shows `3 / 10 continuations déclenchées`, with « Réinitialiser » to
+reset the counter to zero and « Pause » to suspend **without touching the settings**.
 
-### Dossiers personnalisés
+### Custom folders
 
-> ⚠️ **C'est la fonctionnalité la plus fragile du dépôt, et de loin.** Toutes les autres
-> s'appuient sur une *donnée* (API d'usage, Statuspage) ou sur des *variables CSS* du design
-> system. Celle-ci est la seule à manipuler la **structure DOM native** de claude.ai : elle
-> déplace de vrais nœuds de la sidebar. Un remaniement de la sidebar la casse — d'où le tableau
-> de sélecteurs ci-dessous, qui est le point de départ de toute réparation.
+> Warning: **this is the most fragile feature in the repo, and by far.** All the others
+> rely on *data* (usage API, Statuspage) or on the design system's *CSS variables*.
+> This one is the only one that manipulates claude.ai's **native DOM structure**: it
+> moves real sidebar nodes. A sidebar rework breaks it — hence the selector
+> table below, which is the starting point of any repair.
 
-Range les conversations dans des dossiers de couleur, insérés **au-dessus** de « Récents », sans
-aucun rapport avec les *Projects* natifs de claude.ai. Deux clés dédiées :
+Files conversations into colored folders, inserted **above** "Récents", with
+no relation to claude.ai's native *Projects*. Two dedicated keys:
 
-| Clé | Forme | Absente = |
+| Key | Shape | Absent = |
 | --- | --- | --- |
-| `folders` | `[{ id, name, color, collapsed }, …]` | aucun dossier |
-| `folderAssignments` | `{ "<uuid conversation>": "<id dossier>" }` | tout dans « Récents » |
+| `folders` | `[{ id, name, color, collapsed }, …]` | no folder |
+| `folderAssignments` | `{ "<conversation uuid>": "<folder id>" }` | everything in "Récents" |
 
-Une conversation non assignée **n'est pas touchée** : elle reste dans « Récents », à sa place.
+An unassigned conversation is **not touched**: it stays in "Récents", in its place.
 
-#### Tableau des sélecteurs
+#### Selector table
 
-À vérifier dans cet ordre le jour où les dossiers cessent de fonctionner. Ils sont tous en tête
-de [`folders.js`](folders.js), en constantes `CF_*`.
+To be checked in this order the day the folders stop working. They are all at the top
+of [`folders.js`](folders.js), as `CF_*` constants.
 
-| Sélecteur | Rôle | Fragilité |
+| Selector | Role | Fragility |
 | --- | --- | --- |
-| `a[href^="/chat/"]` | **ancrage principal** — l'uuid se lit dans le `href`, il n'existe aucun data-attribute dédié | **faible** : c'est une URL, pas une classe |
-| `.df-drag-shiftable` | wrapper déplaçable, atteint par `link.closest(…)` | moyenne : classe applicative, mais pas utilitaire |
-| `.dframe-nav-scroll` | conteneur scrollable ; **absent = arrêt complet** | moyenne |
-| `.dframe-recents-by-mode` | wrapper des sections, point d'insertion | moyenne ; absent, on se rabat sur `.dframe-nav-scroll` avec un `console.warn` |
-| `aside.dframe-sidebar` | coque observée par le `MutationObserver` | faible : c'est la coque, elle survit aux re-rendus |
-| *parent du premier `button` de l'item qui n'est pas le nôtre* | conteneur de contrôles où se pose le bouton **« − »** | moyenne ; absent, le bouton n'est pas inséré et le retrait par glisser-déposer reste seul disponible (`console.warn`) |
+| `a[href^="/chat/"]` | **main anchor** — the uuid is read from the `href`, there is no dedicated data-attribute | **low**: it is a URL, not a class |
+| `.df-drag-shiftable` | movable wrapper, reached through `link.closest(…)` | medium: an application class, but not a utility one |
+| `.dframe-nav-scroll` | scrollable container; **absent = complete stop** | medium |
+| `.dframe-recents-by-mode` | section wrapper, insertion point | medium; if absent, we fall back to `.dframe-nav-scroll` with a `console.warn` |
+| `aside.dframe-sidebar` | shell observed by the `MutationObserver` | low: it is the shell, it survives the re-renders |
+| *parent of the item's first `button` that is not ours* | control container where the **"−"** button is placed | medium; if absent, the button is not inserted and removal by drag and drop remains the only option (`console.warn`) |
 
-Ce dernier n'est **pas** ciblé par `button[aria-label^="Plus d'options pour"]`, qui dépendrait de
-la langue de l'interface, ni par ses classes, qui sont utilitaires (`.absolute.opacity-0…`) :
-il est déduit du seul bouton natif de la ligne, quel que soit son libellé.
+That last one is **not** targeted by `button[aria-label^="Plus d'options pour"]`, which would depend on
+the interface language, nor by its classes, which are utility ones (`.absolute.opacity-0…`):
+it is deduced from the row's only native button, whatever its label.
 
-Deux sélecteurs de la structure inspectée sont **délibérément inutilisés** :
-`div.group.relative[class*="rounded-"]` (le conteneur d'item) parce que sa classe est un rayon
-Tailwind arbitraire — `rounded-[var(--df-radius-pill)]` — et `div.group\/section` (la section)
-parce qu'une classe Tailwind échappée est exactement le genre d'ancrage qui casse. La section
-est **déduite du DOM** à la place : c'est le parent d'un item qui n'est dans aucun de nos blocs.
+Two selectors from the inspected structure are **deliberately unused**:
+`div.group.relative[class*="rounded-"]` (the item container) because its class is an arbitrary
+Tailwind radius — `rounded-[var(--df-radius-pill)]` — and `div.group\/section` (the section)
+because an escaped Tailwind class is exactly the kind of anchor that breaks. The section
+is **deduced from the DOM** instead: it is the parent of an item that is in none of our blocks.
 
-#### Déplacer, jamais dupliquer
+#### Move, never duplicate
 
-Les items rangés dans un dossier sont les **vrais nœuds** de claude.ai, déplacés. Un clone
-perdrait les gestionnaires de clic et le menu contextuel natifs attachés par le site — c'est le
-compromis central de cette fonctionnalité, et la raison de sa fragilité.
+The items filed into a folder are claude.ai's **real nodes**, moved. A clone
+would lose the native click handlers and context menu attached by the site — that is the
+central trade-off of this feature, and the reason for its fragility.
 
-Quand un item part dans un dossier, un **marque-page** (`<div hidden data-cf-slot="<uuid>">`)
-reste à sa place exacte. L'en sortir le remet donc à sa position chronologique, et pas
-bêtement à la fin de « Récents ». Un re-rendu du site détruit les marque-pages avec le reste,
-ce qui est sans conséquence : après un re-rendu, les items non assignés sont déjà au bon endroit.
+When an item goes into a folder, a **bookmark** (`<div hidden data-cf-slot="<uuid>">`)
+stays in its exact place. Taking it out therefore puts it back at its chronological position, and not
+dumbly at the end of "Récents". A site re-render destroys the bookmarks along with the rest,
+which is inconsequential: after a re-render, the unassigned items are already in the right place.
 
-⚠️ **L'ordre des opérations dans `cfReflow()` n'est pas cosmétique.** Les blocs dont le dossier
-a été supprimé sont retirés **après** la boucle de placement, jamais avant : à l'entrée de la
-passe ils contiennent encore leurs items, et les supprimer d'abord arracherait ces
-conversations du document jusqu'au prochain re-rendu du site. Le test *suppression du dossier :
-conversations libérées, AUCUNE perdue* verrouille ce point précis.
+Warning: **the order of operations in `cfReflow()` is not cosmetic.** Blocks whose folder
+has been deleted are removed **after** the placement loop, never before: on entering the
+pass they still contain their items, and removing them first would tear those
+conversations out of the document until the site's next re-render. The test *folder deletion:
+conversations freed, NONE lost* locks down this precise point.
 
-#### Re-rendus et pagination
+#### Re-renders and pagination
 
-La sidebar est une SPA : elle se re-rend à chaque navigation. Le rangement est donc réappliqué
-par un `MutationObserver` (débounce 120 ms) posé sur `aside.dframe-sidebar` — la coque, qui
-survit aux re-rendus — et **pas** un scan unique au chargement. Tant que la coque n'existe pas,
-on se rabat sur `documentElement`, puis on **resserre** dès qu'elle apparaît : sans ça on
-observerait tout le document en permanence, flux d'une réponse en cours compris.
+The sidebar is an SPA: it re-renders on every navigation. Filing is therefore reapplied
+by a `MutationObserver` (120 ms debounce) placed on `aside.dframe-sidebar` — the shell, which
+survives the re-renders — and **not** a single scan at load time. As long as the shell does not exist,
+we fall back to `documentElement`, then **narrow** as soon as it appears: without that we
+would observe the whole document permanently, including the stream of a reply in progress.
 
-Le `takeRecords()` en fin de passe jette les mutations que le rangement vient lui-même de
-provoquer — sans lui, chaque rendu en déclencherait un autre, indéfiniment.
+The `takeRecords()` at the end of the pass discards the mutations the filing itself has just
+caused — without it, each render would trigger another, indefinitely.
 
-Conséquence utile : une conversation plus ancienne qui **apparaît au scroll** (pagination) est
-rangée sans rechargement. La liste n'est pas virtualisée pour le nombre d'items actuellement
-observé (testé jusqu'à 21), mais le code ne le suppose nulle part.
+Useful consequence: an older conversation that **appears on scroll** (pagination) is
+filed without a reload. The list is not virtualized for the number of items currently
+observed (tested up to 21), but the code assumes that nowhere.
 
 #### Interactions
 
-- **Glisser-déposer** natif du navigateur, aucune bibliothèque. Un `<a href>` est déjà
-  *draggable*, donc on ne pose pas `draggable="true"` : on ajoute seulement notre type de
-  donnée au `dragstart`, sans `preventDefault`, ce qui laisse le système de glissement du site
-  (`df-drag-shiftable`) recevoir ce qu'il attend quand le dépôt ne nous concerne pas. Déposer
-  sur un dossier assigne ; pour désassigner, une bande **« Retirer du dossier »** apparaît dans
-  notre bloc pendant le glissement d'une conversation rangée. Voir
-  [Dépôt : ne jamais toucher aux zones natives](#dépôt--ne-jamais-toucher-aux-zones-natives).
-- **Bouton « − »** sur une conversation **rangée** : la sort du dossier en un clic, sans geste de
-  glissement. Il appelle exactement la même désassignation que le dépôt sur la bande, donc la
-  conversation retrouve elle aussi sa place chronologique dans « Récents » via son marque-page.
-  Il n'apparaît **jamais** sur un item de « Récents » — il n'y aurait aucun dossier à quitter.
-  Il est inséré **dans le conteneur de contrôles natif de la ligne**, celui du « … » : c'est ce
-  qui lui donne gratuitement la même apparition au survol et au focus (variants Tailwind
-  `group-hover:` / `group-focus-within:` portés par la ligne), sans qu'on gère une seule opacité.
-  ⚠️ Ce conteneur est en `position:absolute` : **il ne pousse rien**. La seule chose qui empêche
-  le titre de courir dessous est la place que le lien lui réserve à droite, et le site la
-  dimensionne pour le seul « … ». Y ajouter un bouton a donc fait passer le titre **sous** les
-  contrôles — dans les dossiers uniquement, « Récents » n'ayant rien de plus à loger. La réserve
-  est donc recalculée pour *deux* contrôles sur `.cf-body a[href^="/chat/"]`, avec la troncature
-  reposée au passage : sans effet si le lien la porte déjà, mais nécessaire si le site masque le
-  débordement par un dégradé, qui ne couvrirait plus la bonne zone. Délibérément large plutôt que
-  juste — trop de réserve tronque un peu tôt et ne se voit pas, pas assez ramène le bug.
-  ⚠️ Son clic est intercepté sur **`window` en capture**, comme le dépôt, et le bouton lui-même ne
-  porte **aucun** gestionnaire — voir [Le premier clic qui ne faisait
-  rien](#le-premier-clic-qui-ne-faisait-rien). Ne pas y revenir : un gestionnaire posé sur le
-  bouton est en phase de bouillonnement, donc à la merci du premier `stopPropagation()` venu.
-- **« + »** en haut de la liste : modale de saisie (champ vide, bouton « Créer »), couleur
-  attribuée automatiquement — la première non utilisée de la palette de 8, pour que deux dossiers
-  créés à la suite se distinguent sans seconde question. Il fait 24 px de côté, comme le « … »
-  natif — le bandeau « DOSSIERS » n'a donc plus de padding vertical propre : sinon les deux
-  hauteurs s'additionnaient.
-- **Clic droit sur un dossier** : renommer, changer de couleur (8 pastilles), supprimer.
-  Supprimer **libère** ses conversations vers « Récents » et ne supprime **jamais** une
-  conversation — l'extension n'en a aucun moyen, et ne doit jamais en avoir. La confirmation le
-  dit explicitement, parce que c'est la question qu'on se pose devant un « Supprimer ».
-  Menu et modales copient leurs équivalents natifs — voir [Menu et modales : copier le natif sans
-  en dépendre](#menu-et-modales--copier-le-natif-sans-en-dépendre).
-- **Clic sur l'en-tête** : replier / déplier. Le compteur affiche le nombre de conversations
-  *assignées*, qui peut dépasser le nombre visible si les plus anciennes ne sont pas chargées.
+- Native browser **drag and drop**, no library. An `<a href>` is already
+  *draggable*, so we do not set `draggable="true"`: we only add our data
+  type on `dragstart`, without `preventDefault`, which lets the site's drag system
+  (`df-drag-shiftable`) receive what it expects when the drop does not concern us. Dropping
+  on a folder assigns; to unassign, a **"Retirer du dossier"** strip appears in
+  our block while dragging a filed conversation. See
+  [Dropping: never touch the native zones](#dropping-never-touch-the-native-zones).
+- **"−" button** on a **filed** conversation: takes it out of the folder in one click, without a
+  drag gesture. It calls exactly the same unassignment as the drop on the strip, so the
+  conversation also gets its chronological place back in "Récents" through its bookmark.
+  It **never** appears on a "Récents" item — there would be no folder to leave.
+  It is inserted **into the row's native control container**, the "…" one: that is what
+  gives it, for free, the same appearance on hover and focus (Tailwind
+  `group-hover:` / `group-focus-within:` variants carried by the row), without our managing a single opacity.
+  Warning: this container is `position:absolute`: **it pushes nothing**. The only thing that prevents
+  the title from running underneath is the space the link reserves for it on the right, and the site
+  sizes it for the "…" alone. Adding a button therefore made the title run **under** the
+  controls — in the folders only, since "Récents" has nothing more to house. The reserve
+  is therefore recomputed for *two* controls on `.cf-body a[href^="/chat/"]`, with the truncation
+  set again along the way: without effect if the link already carries it, but necessary if the site masks the
+  overflow with a gradient, which would no longer cover the right zone. Deliberately generous rather than
+  exact — too much reserve truncates a little early and does not show, too little brings the bug back.
+  Warning: its click is intercepted on **`window` in capture**, like the drop, and the button itself
+  carries **no** handler — see [The first click that did
+  nothing](#the-first-click-that-did-nothing). Do not go back on it: a handler placed on the
+  button is in the bubbling phase, hence at the mercy of the first `stopPropagation()` that comes along.
+- **"+"** at the top of the list: input modal (empty field, « Créer » button), color
+  assigned automatically — the first unused one of the 8-color palette, so that two folders
+  created in a row are distinguishable without a second question. It is 24 px on a side, like the native
+  "…" — the "DOSSIERS" strip therefore no longer has vertical padding of its own: otherwise the two
+  heights added up.
+- **Right-click on a folder**: rename, change color (8 swatches), delete.
+  Deleting **frees** its conversations to "Récents" and **never** deletes a
+  conversation — the extension has no way to, and must never have one. The confirmation says
+  so explicitly, because that is the question you ask yourself in front of a "Supprimer".
+  Menu and modals copy their native equivalents — see [Menu and modals: copying the native without
+  depending on it](#menu-and-modals-copying-the-native-without-depending-on-it).
+- **Click on the header**: collapse / expand. The counter shows the number of *assigned*
+  conversations, which can exceed the visible number if the oldest ones are not loaded.
 
-#### Menu et modales : copier le natif sans en dépendre
+#### Menu and modals: copying the native without depending on it
 
-Les composants flottants de cette fonctionnalité **copient un composant natif précis** de
-claude.ai, au lieu d'être peints en couleurs relatives comme le reste du fichier. Un élément
-flottant qui ne ressemble à rien de ce qui l'entoure se voit immédiatement — contrairement à un
-bandeau de section, qui se fond dans la sidebar.
+This feature's floating components **copy a precise native component** of
+claude.ai, instead of being painted in relative colors like the rest of the file. A floating
+element that looks like nothing around it shows immediately — unlike a
+section strip, which blends into the sidebar.
 
-| Notre composant | Modèle natif copié | Avant |
+| Our component | Native model copied | Before |
 | --- | --- | --- |
-| Menu du clic droit sur un dossier | menu « … » d'une conversation (`div[role="menu"]`, `rounded-card bg-surface-3 shadow-panel`) | fond `#1c1c1e` en dur, sombre même en thème clair |
-| Modale de saisie — création et renommage | modale de renommage d'une conversation (`div[role="dialog"]`, boîte de 400 px, `shadow-panel-lg`, fond assombri) | `window.prompt` |
-| Confirmation de suppression | même boîte, sans champ | `window.confirm` |
+| Right-click menu on a folder | a conversation's "…" menu (`div[role="menu"]`, `rounded-card bg-surface-3 shadow-panel`) | hard-coded `#1c1c1e` background, dark even in a light theme |
+| Input modal — creation and renaming | a conversation's rename modal (`div[role="dialog"]`, 400 px box, `shadow-panel-lg`, dimmed backdrop) | `window.prompt` |
+| Delete confirmation | same box, without a field | `window.confirm` |
 
-Ces trois-là sont des composants du **navigateur** : ils ne sont pas seulement laids, ils
-s'affichent tout en haut de la fenêtre, loin du dossier qu'on vient de viser, et ne suivent ni le
-thème de claude.ai ni celui posé par `theme.js`. **Il n'en reste aucun** dans cette
-fonctionnalité.
+Those three are **browser** components: they are not only ugly, they
+show at the very top of the window, far from the folder you have just targeted, and follow neither
+claude.ai's theme nor the one set by `theme.js`. **None of them is left** in this
+feature.
 
-##### Une coque, deux modales
+##### One shell, two modals
 
-Une **saisie** et une **confirmation** partagent la coque (`cfShell()` : overlay, boîte, titre,
-barre de boutons, Échap, clic sur le fond, frappes retenues) et **rien d'autre** — corps
-différent, garde-fou différent, touche Entrée différente. D'où deux fonctions minces au-dessus
-plutôt qu'une seule à paramètres optionnels, qui serait plus longue à lire que les deux réunies.
+An **input** and a **confirmation** share the shell (`cfShell()`: overlay, box, title,
+button bar, Escape, click on the backdrop, keystrokes held back) and **nothing else** — different body,
+different guard, different Enter key. Hence two thin functions on top
+rather than a single one with optional parameters, which would be longer to read than the two combined.
 
-| | `cfDialog()` — saisie | `cfConfirm()` — confirmation |
+| | `cfDialog()` — input | `cfConfirm()` — confirmation |
 | --- | --- | --- |
-| Corps | champ texte, borné à `FOLDER_NAME_MAX` | message, pas de champ |
-| Bouton d'action | primaire foncé, **grisé** tant que le nom ne survit pas au nettoyage | rouge d'alerte, **jamais** grisé — il n'y a rien à valider |
-| Focus à l'ouverture | le champ, texte présélectionné | **« Annuler »** |
-| Entrée | valide | referme, via le bouton focalisé |
-| Échap, « Annuler », clic sur le fond | ferment sans agir | idem |
+| Body | text field, bounded to `FOLDER_NAME_MAX` | message, no field |
+| Action button | dark primary, **greyed out** as long as the name does not survive the cleanup | danger red, **never** greyed out — there is nothing to validate |
+| Focus on opening | the field, text preselected | **« Annuler »** |
+| Enter | submits | closes, through the focused button |
+| Escape, « Annuler », click on the backdrop | close without acting | same |
 
-Deux écarts assumés par rapport au natif, chacun dans un sens :
+Two deliberate departures from the native, each in one direction:
 
-- **Entrée valide la saisie.** La modale native exige un clic, ce qui se défend pour un
-  formulaire et pas pour un champ d'une seule ligne.
-- **Entrée ne confirme pas une suppression.** C'est « Annuler » qui prend le focus, donc Entrée
-  *et* Échap referment sans rien détruire et confirmer demande un geste explicite — l'inverse de
-  `window.confirm`, dont Entrée valide. Le garde-fou d'une confirmation n'est pas dans la saisie,
-  il est dans le geste demandé.
+- **Enter submits the input.** The native modal requires a click, which is defensible for a
+  form and not for a single-line field.
+- **Enter does not confirm a deletion.** It is « Annuler » that takes the focus, so Enter
+  *and* Escape close without destroying anything and confirming requires an explicit gesture — the opposite of
+  `window.confirm`, whose Enter confirms. A confirmation's guard is not in the input,
+  it is in the gesture asked for.
 
-⚠️ Le garde-fou de la saisie (`folderNameSubmittable()`) doit rester aligné sur **les deux**
-écritures qu'il protège : un « Créer » actif sur un nom que `folderCreate()` jette fermerait la
-modale sans qu'aucun dossier n'apparaisse, ce qui se lit comme une création réussie. Deux tests
-purs vérifient l'équivalence dans les deux sens, création et renommage.
+Warning: the input's guard (`folderNameSubmittable()`) must stay aligned with **both**
+writes it protects: a « Créer » active on a name `folderCreate()` discards would close the
+modal without any folder appearing, which reads as a successful creation. Two pure tests
+check the equivalence in both directions, creation and renaming.
 
-Le texte de la confirmation vit dans `folders-source.js` (`folderDeleteMessage()`) et pas dans le
-DOM : c'est du texte qui dépend d'un compte, donc quelque chose qui peut être faux, donc quelque
-chose qui se teste — accord singulier/pluriel, cas du dossier vide, et la phrase constante
-« Aucune conversation ne sera supprimée » qui répond à *la* question qu'on se pose devant un
-bouton « Supprimer ».
+The confirmation text lives in `folders-source.js` (`folderDeleteMessage()`) and not in the
+DOM: it is text that depends on a count, hence something that can be wrong, hence something
+testable — singular/plural agreement, the empty-folder case, and the constant sentence
+"Aucune conversation ne sera supprimée" that answers *the* question you ask yourself in front of a
+"Supprimer" button.
 
-##### Tokens du site avec repli en dur
+##### Site tokens with hard-coded fallbacks
 
-Chaque couleur, rayon et ombre de ces deux composants passe par `var(--cds-x, <valeur observée>)`.
-Les noms de tokens sont **déduits** de leurs classes Tailwind (`bg-surface-3` → `--cds-surface-3`),
-sur le modèle de la seule chaîne confirmée par inspection, `bg-fill-brand` → `--cds-fill-brand`
-(voir [Couleur d'accent](#couleur-daccent)).
+Every color, radius and shadow of these two components goes through `var(--cds-x, <observed value>)`.
+The token names are **deduced** from their Tailwind classes (`bg-surface-3` → `--cds-surface-3`),
+on the model of the only chain confirmed by inspection, `bg-fill-brand` → `--cds-fill-brand`
+(see [Accent color](#accent-color)).
 
-⚠️ Déduits, donc faillibles — mais **un nom erroné ne casse rien** : la valeur observée prend le
-relais. C'est ce qui rend la déduction acceptable ici alors qu'elle ne l'est pas pour `theme.js`,
-qui lui **écrit** ces variables (« ne pas ajouter de variable au hasard »). Lire avec repli est
-sans risque ; écrire au jugé ne l'est pas. Un test verrouille l'invariant : *aucun token du site
-n'est utilisé sans valeur de repli*.
+Warning: deduced, hence fallible — but **a wrong name breaks nothing**: the observed value takes
+over. That is what makes the deduction acceptable here when it is not for `theme.js`,
+which **writes** those variables ("do not add a variable at random"). Reading with a fallback is
+riskless; writing on a hunch is not. A test locks down the invariant: *no site token
+is used without a fallback value*.
 
-| Notre variable | Token lu | Repli clair | Repli sombre |
+| Our variable | Token read | Light fallback | Dark fallback |
 | --- | --- | --- | --- |
 | `--cf-surface` | `--cds-surface-3` | `#fff` | `#2f2f2c` |
 | `--cf-text` | `--cds-text-primary` | `#0b0b0b` | `#f5f5f4` |
-| `--cf-hover` | `--cds-fill-ghost-hover` | noir 6 % | blanc 10 % |
-| `--cf-field` | `--cds-fill-field` | noir 3 % | blanc 6 % |
-| `--cf-ring` | `--cds-shadow-field-ring` | liseré interne 1 px | idem, clair |
+| `--cf-hover` | `--cds-fill-ghost-hover` | black 6 % | white 10 % |
+| `--cf-field` | `--cds-fill-field` | black 3 % | white 6 % |
+| `--cf-ring` | `--cds-shadow-field-ring` | 1 px inner border | same, light |
 | `--cf-card` | `--cds-radius-card` | `12px` | — |
-| `--cf-danger` | *aucun* — voir ci-dessous | `#b42318` | — |
-| `--cf-panel`, `--cf-panel-lg` | `--cds-shadow-panel{,-lg}` | 3 couches (liseré + 2 ombres portées) | ombres plus denses |
+| `--cf-danger` | *none* — see below | `#b42318` | — |
+| `--cf-panel`, `--cf-panel-lg` | `--cds-shadow-panel{,-lg}` | 3 layers (border + 2 drop shadows) | denser shadows |
 
-⚠️ **Volontairement pas `--cds-radius` ni `--cds-shadow-{sm,md,lg}`**, les seuls tokens que le
-dépôt connaisse déjà : ce sont les tokens de **base**, et rien ne confirme qu'ils valent le
-`rounded-card` / `shadow-panel` observés sur ces deux composants-là — la question n'a pas pu être
-tranchée sans inspecter le site. Les prendre pour équivalents ferait diverger notre modale de la
-modale native qu'elle copie, soit exactement le défaut corrigé ici. Ils sont en plus déjà
-multipliés par `theme.js` pour le réglage « coins/ombres », alors que les composants natifs
-copiés, eux, ne bougent pas.
+Warning: **deliberately not `--cds-radius` or `--cds-shadow-{sm,md,lg}`**, the only tokens the
+repo already knows: those are the **base** tokens, and nothing confirms they equal the
+`rounded-card` / `shadow-panel` observed on these two components — the question could not be
+settled without inspecting the site. Taking them as equivalent would make our modal diverge from the
+native modal it copies, that is exactly the flaw fixed here. On top of that they are already
+scaled by `theme.js` for the "corners/shadows" setting, while the native components
+copied do not move.
 
-Le mode sombre est donc couvert **deux fois** : par le token du site quand il existe (il suit le
-réglage de claude.ai), et sinon par un repli sous `@media (prefers-color-scheme: dark)` — la
-préférence *système*, faute de moyen fiable de lire celle du site. Repli de repli, jamais la
-source principale. Le bouton primaire de la modale, lui, ne nomme aucune couleur : il est
-l'**inverse** de la boîte (`background: var(--cf-text); color: var(--cf-surface)`), donc foncé
-sur clair en thème clair et l'inverse en thème sombre, sans qu'on ait à savoir dans quel mode
-on est.
+Dark mode is therefore covered **twice**: by the site's token when it exists (it follows
+claude.ai's setting), and otherwise by a fallback under `@media (prefers-color-scheme: dark)` — the
+*system* preference, for lack of a reliable way to read the site's one. A fallback of a fallback, never the
+main source. The modal's primary button, for its part, names no color: it is
+the **inverse** of the box (`background: var(--cf-text); color: var(--cf-surface)`), hence dark
+on light in a light theme and the opposite in a dark theme, without our having to know which mode
+we are in.
 
-⚠️ **`--cf-danger` est le seul à ne lire aucun token du site**, et c'est délibéré : les autres
-noms sont déduits de classes *réellement observées* sur le composant copié, alors qu'aucun bouton
-de suppression de claude.ai n'a été inspecté. Déduire un `--cds-fill-danger` sans avoir rien vu
-serait exactement la « variable au hasard » que le README interdit ailleurs — et l'ajouter reste
-une ligne le jour où la vraie convention du site est relevée. `#b42318` porte du blanc à ~7:1,
-donc une seule valeur suffit dans les deux modes.
+Warning: **`--cf-danger` is the only one that reads no site token**, and that is deliberate: the other
+names are deduced from classes *actually observed* on the copied component, whereas no claude.ai
+delete button has been inspected. Deducing a `--cds-fill-danger` without having seen anything
+would be exactly the "variable at random" the README forbids elsewhere — and adding it remains
+one line the day the site's real convention is collected. `#b42318` carries white at ~7:1,
+so a single value is enough in both modes.
 
-Les **icônes** du menu ne copient pas le natif : claude.ai passe par une police de ligatures
-propriétaire (`Anthropicons-Variable`), qu'on ne réplique pas. On garde le trait SVG
-`currentColor` des autres boutons de l'extension (`export.js`), au gabarit natif de 20 px. Seuls
-le conteneur et la mise en forme des items (icône + libellé tronqué, `role="menu"` /
-`role="menuitem"`) copient le natif.
+The menu's **icons** do not copy the native: claude.ai goes through a proprietary ligature
+font (`Anthropicons-Variable`), which we do not replicate. We keep the `currentColor` SVG
+stroke of the extension's other buttons (`export.js`), at the native 20 px template. Only
+the container and the item layout (icon + truncated label, `role="menu"` /
+`role="menuitem"`) copy the native.
 
-⚠️ **Toutes les frappes faites dans la modale sont arrêtées à l'entrée** (`stopPropagation` sur
-`keydown`/`keyup`/`keypress` de l'overlay) : claude.ai écoute le clavier sur le document pour ses
-raccourcis, et taper `/` ou `e` dans un nom de dossier ne doit pas en déclencher un. C'est la même
-préoccupation que le reste du fichier, dans l'autre sens — ici on **retient** nos événements au
-lieu d'intercepter les siens, donc le bouillonnement suffit : ils partent de notre champ et
-passent forcément par l'overlay avant d'en sortir.
+Warning: **every keystroke made in the modal is stopped at the entrance** (`stopPropagation` on
+the overlay's `keydown`/`keyup`/`keypress`): claude.ai listens to the keyboard on the document for its
+shortcuts, and typing `/` or `e` in a folder name must not trigger one. It is the same
+concern as the rest of the file, in the other direction — here we **hold back** our events instead
+of intercepting its ones, so bubbling is enough: they start from our field and
+necessarily pass through the overlay before leaving it.
 
-#### Dépôt : ne jamais toucher aux zones natives
+#### Dropping: never touch the native zones
 
-> Corrigé après un bug vu en usage réel : déposer une conversation sur un dossier custom
-> l'**épinglait** dans la section native « Épinglé » au lieu de l'assigner.
+> Fixed after a bug seen in real use: dropping a conversation on a custom folder
+> **pinned** it in the native "Épinglé" section instead of assigning it.
 
-Les gestionnaires appelaient pourtant déjà `preventDefault()` et `stopPropagation()` — ce
-n'était donc pas la cause. Deux défauts réels, **chacun suffisant** à reproduire le symptôme :
+The handlers were nevertheless already calling `preventDefault()` and `stopPropagation()` — so that
+was not the cause. Two real flaws, **each sufficient** to reproduce the symptom:
 
-| Défaut | Pourquoi ça épinglait | Correction |
+| Flaw | Why it pinned | Fix |
 | --- | --- | --- |
-| Le glissement était identifié par `dataTransfer.types` | Le site pose son propre `dragstart` et une implémentation de drag appelle couramment `clearData()` avant d'écrire **son** type, ce qui efface le nôtre. Notre `dragover` ne reconnaissait alors plus rien, n'appelait pas `preventDefault()`, et le dépôt n'était même pas **autorisé** sur nos blocs : le navigateur le renvoyait à la logique du site | `cfDragging`, posé au `dragstart`, fait foi ; `dataTransfer` ne sert plus qu'à *récupérer* l'uuid, en secours |
-| Écoute en phase de **bouillonnement** | Si le site écoute en phase de **capture** sur un ancêtre, son gestionnaire s'exécute *avant* le nôtre — et nos blocs sont à l'intérieur de `.dframe-nav-scroll`. `stopPropagation()` arrivait trop tard | Interception sur **`window` en capture** : le tout premier point de la trajectoire d'un événement, avant tout gestionnaire posé sur un descendant, quel que soit son ordre d'inscription |
+| The drag was identified by `dataTransfer.types` | The site installs its own `dragstart` and a drag implementation commonly calls `clearData()` before writing **its** type, which erases ours. Our `dragover` then recognized nothing, did not call `preventDefault()`, and the drop was not even **allowed** on our blocks: the browser sent it back to the site's logic | `cfDragging`, set at `dragstart`, is authoritative; `dataTransfer` now only serves to *retrieve* the uuid, as a backup |
+| Listening in the **bubbling** phase | If the site listens in the **capture** phase on an ancestor, its handler runs *before* ours — and our blocks are inside `.dframe-nav-scroll`. `stopPropagation()` came too late | Interception on **`window` in capture**: the very first point of an event's trajectory, before any handler placed on a descendant, whatever its registration order |
 
-Conséquence volontaire : **plus aucun gestionnaire n'est posé sur un élément natif.** On n'agit
-que si la cible est dans notre sous-arbre *et* qu'un glissement de conversation est en cours.
-Partout ailleurs l'événement passe intact, donc la réorganisation et l'épinglage natifs
-fonctionnent exactement comme avant.
+Deliberate consequence: **no handler is placed on a native element anymore.** We only act
+if the target is in our subtree *and* a conversation drag is in progress.
+Everywhere else the event passes intact, so native reordering and pinning
+work exactly as before.
 
-C'est aussi pourquoi **désassigner ne se fait plus en déposant sur « Récents »** : poser un
-gestionnaire sur une section du site était précisément ce qui pouvait déclencher son épinglage.
-La bande « Retirer du dossier » est à nous, dans notre bloc, et n'apparaît que pendant le
-glissement d'une conversation déjà rangée.
+That is also why **unassigning is no longer done by dropping on "Récents"**: placing a
+handler on a site section was precisely what could trigger its pinning.
+The "Retirer du dossier" strip is ours, in our block, and only appears while
+dragging an already filed conversation.
 
-**Repli pointeur.** `df-drag-shiftable` (« les items s'écartent ») suggère un glissement au
-*pointeur* et non en HTML5 — auquel cas aucun `dragstart`/`dragover`/`drop` n'est émis et tout
-ce qui précède reste muet. Un repli sur `pointerdown`/`pointermove`/`pointerup` prend alors le
-relais, armé **uniquement** si aucun `dragstart` n'a été vu pour le geste en cours : les deux
-voies ne peuvent pas se déclencher ensemble, et c'est le navigateur qui tranche, pas nous. Après
-un dépôt capté au pointeur, un `keydown` Échap est envoyé au document — le site vient d'être
-privé de son `pointerup`, et Échap est la sortie conventionnelle des bibliothèques de drag pour
-annuler proprement un glissement en cours.
+**Pointer fallback.** `df-drag-shiftable` ("the items move apart") suggests a *pointer*
+drag and not HTML5 — in which case no `dragstart`/`dragover`/`drop` is emitted and everything
+above stays silent. A fallback on `pointerdown`/`pointermove`/`pointerup` then takes
+over, armed **only** if no `dragstart` was seen for the current gesture: the two
+paths cannot fire together, and it is the browser that decides, not us. After
+a drop caught with the pointer, an Escape `keydown` is sent to the document — the site has just been
+deprived of its `pointerup`, and Escape is the conventional exit of drag libraries to
+cleanly cancel a drag in progress.
 
-#### Le premier clic qui ne faisait rien
+#### The first click that did nothing
 
-> Corrigé après un bug vu en usage réel : le **premier** clic sur le bouton « − » ne faisait rien,
-> le suivant — et tous les suivants — marchait. Sans recharger la page entre les deux.
+> Fixed after a bug seen in real use: the **first** click on the "−" button did nothing,
+> the next one — and all the ones after — worked. Without reloading the page in between.
 
-C'est **le défaut n° 2 du tableau ci-dessus**, au même endroit du fichier : le bouton « − » était le
-seul gestionnaire de cette fonctionnalité à être resté posé sur un élément, donc en phase de
-**bouillonnement**.
+It is **flaw no. 2 of the table above**, at the same place in the file: the "−" button was the
+only handler of this feature that had stayed placed on an element, hence in the
+**bubbling** phase.
 
-Trois pistes étaient plausibles ; deux sont écartées par le code lui-même, la troisième se
-reproduit en test :
+Three leads were plausible; two are ruled out by the code itself, the third
+reproduces in a test:
 
-| Piste | Verdict |
+| Lead | Verdict |
 | --- | --- |
-| Gestionnaire attaché deux fois | Impossible : `cfAddUnfile()` sort si `bar.querySelector('.cf-unfile')` existe, et un gestionnaire en double ferait le retrait **deux** fois (idempotent), pas zéro |
-| Course entre l'insertion du bouton et l'attachement de son gestionnaire | Impossible : le gestionnaire était posé **avant** l'insertion, dans la même fonction synchrone |
-| Clic absorbé par un gestionnaire de **capture** posé plus haut | **C'est ça** — seule piste qui reproduit le symptôme, « premier clic seulement » compris |
+| Handler attached twice | Impossible: `cfAddUnfile()` returns if `bar.querySelector('.cf-unfile')` exists, and a duplicate handler would do the removal **twice** (idempotent), not zero times |
+| Race between inserting the button and attaching its handler | Impossible: the handler was placed **before** the insertion, in the same synchronous function |
+| Click absorbed by a **capture** handler placed higher up | **That is it** — the only lead that reproduces the symptom, "first click only" included |
 
-Le mécanisme : une capture descend depuis `window`, elle passe donc **avant** la cible. Il suffit
-qu'un gestionnaire du site posé en capture sur un ancêtre appelle `stopPropagation()` pour que le
-clic n'atteigne jamais le bouton. Et une bibliothèque de glissement arme couramment un « avaleur de
-clic » **à usage unique** en fin de geste, pour que le clic qui suit un glissement ne déclenche
-rien : une fois consommé, tout redevient normal — d'où le premier clic, et lui seul. Notre propre
-repli pointeur y contribue, puisqu'il prive le site de son `pointerup` et lui envoie un Échap pour
-qu'il annule : c'est très exactement une fin de geste.
+The mechanism: a capture descends from `window`, so it passes **before** the target. It only takes
+a site handler placed in capture on an ancestor calling `stopPropagation()` for the
+click never to reach the button. And a drag library commonly arms a **single-use** "click
+swallower" at the end of a gesture, so that the click following a drag triggers
+nothing: once consumed, everything is normal again — hence the first click, and it alone. Our own
+pointer fallback contributes to it, since it deprives the site of its `pointerup` and sends it an Escape so
+it cancels: that is very exactly an end of gesture.
 
-**Correction** : la même que pour le dépôt. Interception sur **`window` en capture**, par
-délégation sur `.cf-unfile`, et plus **aucun** gestionnaire sur le bouton. Le content script
-s'inscrit au chargement de la page, donc avant tout avaleur armé plus tard par un geste. L'uuid est
-relu dans le `href` du lien de la ligne au moment du clic au lieu d'être gardé dans une fermeture :
-il n'y a plus de fermeture, et la délégation règle au passage le cycle de vie du bouton, détruit et
-recréé à chaque re-rendu de la sidebar.
+**Fix**: the same as for the drop. Interception on **`window` in capture**, by
+delegation on `.cf-unfile`, and **no** handler on the button anymore. The content script
+registers at page load, hence before any swallower armed later by a gesture. The uuid is
+reread from the row's link `href` at click time instead of being kept in a closure:
+there is no closure anymore, and delegation settles the lifecycle of the button along the way, destroyed and
+recreated on every sidebar re-render.
 
-Le test *un avaleur de clic du site ne peut plus manger le retrait* rejoue la scène : un avaleur en
-capture sur le document, un **témoin** (le repli d'un dossier, lui géré sur l'élément) qui prouve
-que l'avaleur mange bel et bien les clics, puis le clic sur « − » qui doit passer quand même.
-Vérifié **rouge avant, vert après** — sans ça, la correction ne serait qu'une hypothèse.
+The test *a site click swallower can no longer eat the removal* replays the scene: a swallower in
+capture on the document, a **control** (folder collapsing, handled on the element) that proves
+the swallower really does eat the clicks, then the click on "−" that must get through anyway.
+Verified **red before, green after** — without that, the fix would only be a hypothesis.
 
-⚠️ Ce qui reste non observé : *quel* gestionnaire du site arme l'avaleur. Le test prouve la classe
-de causes et l'immunité, pas l'identité du coupable — et la correction ne dépend ni de l'une ni de
-l'autre.
+Warning: what remains unobserved: *which* site handler arms the swallower. The test proves the class
+of causes and the immunity, not the culprit's identity — and the fix depends on neither.
 
 #### Tests
 
-Toute la logique de rangement — parsing d'uuid, création, assignation, suppression — est dans
-[`folders-source.js`](folders-source.js), **pure** et testée par `node test-folders.js`.
-`folders.js` ne garde que le DOM. La séparation est délibérée : la partie qui cassera un jour ne
-doit pas entraîner avec elle la partie vérifiable.
+All the filing logic — uuid parsing, creation, assignment, deletion — is in
+[`folders-source.js`](folders-source.js), **pure** and tested by `node test-folders.js`.
+`folders.js` only keeps the DOM. The separation is deliberate: the part that will break one day must
+not drag the verifiable part along with it.
 
-Le placement DOM lui-même a son propre harnais, [`test-folders-dom.js`](test-folders-dom.js),
-qui monte la structure du tableau ci-dessus dans jsdom et couvre les deux scénarios invisibles
-autrement : le re-rendu de la SPA et la conversation qui arrive au scroll. C'est le **seul**
-test du dépôt à avoir besoin d'une dépendance : sans `npm install jsdom` il **se saute** au lieu
-d'échouer, pour que le dépôt reste chargeable tel quel, sans `package.json` ni `node_modules`.
+DOM placement itself has its own harness, [`test-folders-dom.js`](test-folders-dom.js),
+which builds the structure of the table above in jsdom and covers the two scenarios otherwise
+invisible: the SPA re-render and the conversation arriving on scroll. It is the **only**
+test in the repo that needs a dependency: without `npm install jsdom` it **skips itself** instead
+of failing, so the repo stays loadable as-is, without `package.json` or `node_modules`.
 
-Le dépôt y est couvert par un **espion** qui rejoue le gestionnaire du site : posé sur un
-ancêtre de nos blocs, dans les **deux** phases. Les tests vérifient qu'il n'est jamais appelé
-quand on dépose sur un dossier, et qu'il l'est bel et bien — liste d'appels exacte à l'appui —
-quand on dépose ailleurs. Son silence est donc une garantie, pas un faux négatif.
+Dropping is covered there by a **spy** that replays the site's handler: placed on an
+ancestor of our blocks, in **both** phases. The tests check that it is never called
+when we drop on a folder, and that it really is — with an exact call list as evidence —
+when we drop elsewhere. Its silence is therefore a guarantee, not a false negative.
 
-Le bouton « − » y est verrouillé par un test qui rejoue **les deux** retraits de bout en bout —
-dépôt sur la bande d'un côté, clic de l'autre — et compare l'état complet, DOM *et* storage : la
-seule façon de garantir qu'il n'existe pas une seconde implémentation de la désassignation. Un
-second test le protège de l'« avaleur de clic » du site (voir [Le premier clic qui ne faisait
-rien](#le-premier-clic-qui-ne-faisait-rien)).
+The "−" button is locked down there by a test that replays **both** removals end to end —
+drop on the strip on one side, click on the other — and compares the complete state, DOM *and* storage: the
+only way to guarantee there is no second implementation of unassignment. A
+second test protects it from the site's "click swallower" (see [The first click that did
+nothing](#the-first-click-that-did-nothing)).
 
-Les modales sont coupées en deux de la même façon. Ce qu'elles **décident** est pur et testé par
-`node test-folders.js` : un nom soumettable est exactement un nom que `folderRename()` *et*
-`folderCreate()` écriraient — l'équivalence est vérifiée dans les deux sens plutôt qu'affirmée —
-puis Échap annule / Entrée valide, et le texte de la confirmation (accord, dossier vide, réassurance
-toujours présente).
+The modals are split in two the same way. What they **decide** is pure and tested by
+`node test-folders.js`: a submittable name is exactly a name that `folderRename()` *and*
+`folderCreate()` would write — the equivalence is checked in both directions rather than asserted —
+then Escape cancels / Enter submits, and the confirmation text (agreement, empty folder, reassurance
+always present).
 
-Ce qu'elles **affichent** est dans `test-folders-dom.js` : champ pré-rempli, focalisé et
-présélectionné au renommage, vide et bouton « Créer » grisé à la création ; Entrée et le bouton
-d'action produisent le même résultat ; Échap, « Annuler » et le clic sur le fond n'écrivent rien
-— un clic *dans* la boîte, lui, ne ferme pas ; la confirmation n'a pas de champ, son bouton porte
-la couleur d'alerte et le focus est sur « Annuler » ; ni `window.prompt` ni `window.confirm` ne
-sont plus appelés ; aucune frappe n'atteint le document.
+What they **display** is in `test-folders-dom.js`: field pre-filled, focused and
+preselected when renaming, empty and « Créer » button greyed out on creation; Enter and the action
+button produce the same result; Escape, « Annuler » and the click on the backdrop write nothing
+— a click *inside* the box, however, does not close; the confirmation has no field, its button carries
+the danger color and the focus is on « Annuler »; neither `window.prompt` nor `window.confirm` are
+called anymore; no keystroke reaches the document.
 
-Quatre garde-fous ont été vérifiés **rouges avant, verts après** : nom vide, frappes retenues,
-clic sur le fond limité à sa cible, et focus sur « Annuler ».
+Four guards were verified **red before, green after**: empty name, keystrokes held back,
+click on the backdrop limited to its target, and focus on « Annuler ».
 
-⚠️ Une limite de jsdom à connaître : il **n'applique pas** la règle du navigateur selon laquelle
-un `drop` n'est émis que si le `dragover` correspondant a été neutralisé. Les tests vérifient
-donc *qui reçoit quoi*, pas l'arbitrage du navigateur. En vrai, le premier défaut du tableau
-ci-dessus a une conséquence de plus : le `drop` n'atteint jamais nos zones.
+Warning: a jsdom limitation to know about: it **does not apply** the browser rule whereby
+a `drop` is only emitted if the corresponding `dragover` was neutralized. The tests therefore check
+*who receives what*, not the browser's arbitration. In reality, the first flaw of the table
+above has one more consequence: the `drop` never reaches our zones.
 
-Il ne remplace pas une vérification à la main sur claude.ai : il prouve la logique de placement,
-pas que les sélecteurs correspondent encore au vrai site — ça, seul le navigateur le dit.
+It does not replace a manual check on claude.ai: it proves the placement logic,
+not that the selectors still match the real site — only the browser says that.
 
-### Export de conversation
+### Conversation export
 
-Un bouton d'export à côté de « Partager », dans l'en-tête de conversation, avec deux sorties :
-**Markdown** et **PDF**. claude.ai n'expose aucun export natif — vérifié dans le menu « … » de
-la sidebar, celui du titre de conversation, et la modale de partage — donc rien n'est doublé.
+An export button next to "Partager", in the conversation header, with two outputs:
+**Markdown** and **PDF**. claude.ai exposes no native export — checked in the sidebar's "…"
+menu, the conversation title's one, and the share modal — so nothing is duplicated.
 
-Aucune clé de storage : cette fonctionnalité ne stocke rien.
+No storage key: this feature stores nothing.
 
-#### Le contenu vient de l'API, pas du DOM
+#### The content comes from the API, not from the DOM
 
-C'est **la** décision de conception de ce module. Le GET
-`…/organizations/<org>/chat_conversations/<uuid>` est la seule réponse qui porte tout
-l'historique — le même endpoint que celui déjà intercepté pour l'estimation de contexte
-(voir l'en-tête de [`inject.js`](inject.js)), donc **confirmé par capture**.
+This is **the** design decision of this module. The GET
+`…/organizations/<org>/chat_conversations/<uuid>` is the only response that carries the whole
+history — the same endpoint as the one already intercepted for context estimation
+(see the header of [`inject.js`](inject.js)), hence **confirmed by capture**.
 
-Scraper le DOM aurait obligé à dérouler toute la conversation avant d'exporter, et un export
-tronqué ne se voit pas : le fichier a l'air complet. Ici, **ou l'export est complet, ou il
-échoue en le disant**. Il n'y a pas de repli DOM, délibérément — un repli silencieusement
-tronqué serait pire que pas d'export du tout.
+Scraping the DOM would have required scrolling through the whole conversation before exporting, and a truncated
+export does not show: the file looks complete. Here, **either the export is complete, or it
+fails and says so**. There is no DOM fallback, deliberately — a silently
+truncated fallback would be worse than no export at all.
 
-⚠️ **L'uuid d'organisation n'est pas deviné.** `ORGS_PATH` étant la seule supposition non
-vérifiée du dépôt, en dépendre couplerait l'export au sondage d'usage et le ferait reposer sur
-un pari. Il est donc relevé dans les URL que la page a **réellement** appelées
-(`performance.getEntriesByType('resource')`), en deux niveaux :
+Warning: **the organization uuid is not guessed.** Since `ORGS_PATH` is the only unverified
+assumption of the repo, depending on it would couple the export to usage polling and make it rest on
+a bet. It is therefore collected from the URLs the page has **actually** called
+(`performance.getEntriesByType('resource')`), at two levels:
 
-1. l'URL **exacte** que le site a utilisée pour cette conversation, query string comprise — on
-   hérite de ses paramètres sans avoir à les connaître ;
-2. à défaut, reconstruite à partir de n'importe quelle URL portant l'organisation (le site en
-   appelle en permanence, donc elle se trouve même si le GET de conversation est sorti du
-   tampon de Resource Timing, limité à 250 entrées).
+1. the **exact** URL the site used for this conversation, query string included — we
+   inherit its parameters without having to know them;
+2. failing that, rebuilt from any URL carrying the organization (the site
+   calls some constantly, so it is found even if the conversation GET has left the
+   Resource Timing buffer, limited to 250 entries).
 
-Si aucun des deux n'aboutit, l'export refuse de partir et demande de recharger l'onglet.
+If neither succeeds, the export refuses to start and asks you to reload the tab.
 
-| Sélecteur | Rôle |
+| Selector | Role |
 | --- | --- |
-| `button[data-testid="wiggle-controls-actions-share"]` | **ancrage principal** : voisin de placement **et** modèle de style |
-| `div#dframe-header-actions-slot` | conteneur de **repli**, si « Partager » est absent |
-| `div[data-testid="chat-header"]` | observé par le `MutationObserver` ; sert aussi à cadrer la recherche |
+| `button[data-testid="wiggle-controls-actions-share"]` | **main anchor**: placement neighbour **and** style model |
+| `div#dframe-header-actions-slot` | **fallback** container, if "Partager" is absent |
+| `div[data-testid="chat-header"]` | observed by the `MutationObserver`; also used to frame the search |
 
-⚠️ **L'ancrage part du bouton « Partager », pas du slot** — et pas l'inverse, contrairement à la
-première version. Le slot avait été pris pour « le » point d'insertion stable, mais il est
-**absent d'au moins un contexte** (conversation de Projet) : l'export s'y désactivait avec un
-`[export] point d'insertion … introuvable` alors que « Partager » était bien là. `exAnchor()`
-cherche donc « Partager » du plus proche au plus large — slot, puis en-tête, puis document — et
-place le bouton dans *son* parent, quel qu'il soit. La détection ne dépend plus de la coque
-d'en-tête, **sans qu'aucun sélecteur de conteneur n'ait été deviné par contexte** : c'est la même
-paire confirmée, essayée dans un autre ordre. Le repli sur le slot n'est utilisé que si
-« Partager » est introuvable ; si les deux manquent, l'export se désactive proprement — c'est le
-seul cas restant, et il reste signalé.
+Warning: **the anchoring starts from the "Partager" button, not from the slot** — and not the other way round, unlike the
+first version. The slot had been taken for "the" stable insertion point, but it is
+**absent from at least one context** (Project conversation): the export disabled itself there with a
+`[export] no anchor point …` while "Partager" was indeed there. `exAnchor()`
+therefore looks for "Partager" from nearest to widest — slot, then header, then document — and
+places the button in *its* parent, whatever it is. Detection no longer depends on the header
+shell, **without any container selector having been guessed per context**: it is the same
+confirmed pair, tried in a different order. The fallback on the slot is only used if
+"Partager" is not found; if both are missing, the export disables itself cleanly — that is the
+only remaining case, and it stays reported.
 
-Le bouton **ne s'invente pas de style** : il copie la `className` du bouton « Partager » et la
-taille de son `<svg>`, donc rayon, états de survol et thème suivent le site sans qu'on ait à
-les connaître (même procédé que `folders.js` pour les classes de section). Sans bouton
-« Partager », il se rabat sur un style neutre et le signale en console. Il n'est posé que sur
-une conversation ouverte, et reposé après chaque re-rendu de l'en-tête.
+The button **does not invent a style for itself**: it copies the `className` of the "Partager" button and the
+size of its `<svg>`, so radius, hover states and theme follow the site without our having to
+know them (same technique as `folders.js` for the section classes). Without a
+"Partager" button, it falls back on a neutral style and reports it in the console. It is only placed on
+an open conversation, and put back after each header re-render.
 
 #### Markdown
 
-Le texte des messages est repris **verbatim** : les réponses de Claude *sont* du markdown,
-blocs de code et langages compris — les réécrire ne pourrait que les abîmer. Seul le titre est
-assaini, parce qu'il devient une ligne `#` qu'un retour à la ligne casserait. Les blocs qui ne
-sont pas du texte (`tool_use`, `tool_result`, `thinking`) sont écartés : un export doit se lire
-comme la conversation, pas comme sa trace d'exécution.
+The message text is taken **verbatim**: Claude's replies *are* markdown,
+code blocks and languages included — rewriting them could only damage them. Only the title is
+sanitized, because it becomes a `#` line that a line break would break. Blocks that are
+not text (`tool_use`, `tool_result`, `thinking`) are discarded: an export must read
+like the conversation, not like its execution trace.
 
-#### PDF : `window.print()`, aucune bibliothèque
+#### PDF: `window.print()`, no library
 
-Pas de jsPDF ni d'équivalent. On imprime un document autonome et Chrome propose *Enregistrer au
-format PDF*. L'impression passe par une **iframe hors écran** plutôt que par une fenêtre : pas
-de bloqueur de pop-up à affronter, et surtout `print()` n'imprime alors *que* ce document, pas
-la page claude.ai autour.
+No jsPDF or equivalent. We print a self-contained document and Chrome offers *Save as
+PDF*. Printing goes through an **offscreen iframe** rather than a window: no
+pop-up blocker to fight, and above all `print()` then prints *only* that document, not
+the claude.ai page around it.
 
-Le markdown est rendu en HTML par un convertisseur volontairement **partiel** (blocs de code
-avec leur langage, titres, listes, citations, liens, gras/italique) — ce qui n'est pas reconnu
-ressort en paragraphe, jamais perdu. C'est le compromis assumé pour ne pas embarquer un
-analyseur markdown complet derrière un bouton d'impression.
+The markdown is rendered to HTML by a deliberately **partial** converter (code blocks
+with their language, headings, lists, quotes, links, bold/italic) — what is not recognized
+comes out as a paragraph, never lost. That is the accepted trade-off for not embedding a full
+markdown parser behind a print button.
 
-L'échappement HTML passe **toujours** avant le formatage : une conversation contenant
-`<script>` ne doit jamais redevenir une balise dans le document imprimé, et un lien
-`javascript:` n'est jamais rendu cliquable. Deux tests couvrent précisément ces deux cas.
+HTML escaping **always** comes before formatting: a conversation containing
+`<script>` must never become a tag again in the printed document, and a
+`javascript:` link is never made clickable. Two tests cover precisely those two cases.
 
-#### Nom de fichier
+#### File name
 
-`<titre> - AAAA-MM-JJ.md` (ou `.pdf`), avec un nettoyage visant l'union des interdits Windows,
-macOS et Linux : `<>:"/\|?*`, les caractères de contrôle, les points ou espaces finaux — que
-l'explorateur Windows tronque en silence — et les noms de périphériques DOS (`CON`, `NUL`,
-`COM1`…), que Windows refuse même suivis d'une extension. Titre vide ou entièrement filtré :
-repli sur `conversation`.
+`<title> - YYYY-MM-DD.md` (or `.pdf`), with a cleanup aiming at the union of the Windows,
+macOS and Linux forbidden sets: `<>:"/\|?*`, control characters, trailing dots or spaces — which
+Windows Explorer truncates silently — and the DOS device names (`CON`, `NUL`,
+`COM1`…), which Windows refuses even followed by an extension. Empty or entirely filtered title:
+fallback to `conversation`.
 
 #### Tests
 
-`node test-export.js` couvre la logique pure (32 tests) : génération du Markdown, échappement,
-rendu des blocs de code, nom de fichier, lecture de la réponse d'API.
-[`test-export-dom.js`](test-export-dom.js) vérifie l'insertion du bouton dans l'en-tête (8 tests)
-et **se saute** sans jsdom, comme `test-folders-dom.js`. Trois de ses tests portent sur la
-détection du contexte : en-tête sans slot d'actions, en-tête non reconnu, et aucun ancrage du
-tout — les deux premiers échouent bien si l'on remet la condition « slot obligatoire ».
+`node test-export.js` covers the pure logic (32 tests): Markdown generation, escaping,
+code block rendering, file name, reading the API response.
+[`test-export-dom.js`](test-export-dom.js) checks the insertion of the button into the header (8 tests)
+and **skips itself** without jsdom, like `test-folders-dom.js`. Three of its tests are about
+context detection: header without an action slot, unrecognized header, and no anchor at
+all — the first two do fail if the "slot required" condition is put back.
 
 ## Debug
 
-**L'usage se diagnostique depuis la console du service worker** (`chrome://extensions` →
-*service worker*). Messages possibles, du plus fréquent au plus rare :
+**Usage is diagnosed from the service worker console** (`chrome://extensions` →
+*service worker*). Possible messages, from the most frequent to the rarest:
 
-| Message | Ce que ça veut dire |
+| Message | What it means |
 | --- | --- |
-| `HTTP 404` sur la requête d'organisations | `ORGS_PATH` est faux — voir la section dédiée en haut |
-| `format de réponse inconnu … JSON reçu :` | un cas non couvert par `parseUsage()` — l'ajouter, avec un test dans `test-usage-source.js` |
-| `fetch direct échoue (HTTP 403) : repli sur un onglet claude.ai` | normal, le repli prend la main |
-| `aucun onglet claude.ai ouvert` | l'API refuse le SW et il n'y a pas de relais disponible |
-| `aucun onglet claude.ai ne répond` | l'onglet est antérieur au chargement de l'extension → le recharger |
-| `[status] sondage échoue :` | status.claude.com est injoignable — le popup masque simplement la section |
-| `[status] format de réponse inconnu … JSON reçu :` | Statuspage a changé de forme — corriger `parseStatus()`, avec un test dans `test-status-source.js` |
-| `[autocontinue] sondage échoue :` | la boucle du worker n'a pas pu lire le storage ou lister les onglets |
+| `HTTP 404` on the organizations request | `ORGS_PATH` is wrong — see the dedicated section at the top |
+| `unknown response format … JSON received:` | a case not covered by `parseUsage()` — add it, with a test in `test-usage-source.js` |
+| `direct fetch failed (HTTP 403): falling back to a claude.ai tab` | normal, the fallback takes over |
+| `no claude.ai tab open` | the API refuses the SW and there is no relay available |
+| `no claude.ai tab responds` | the tab predates the extension load → reload it |
+| `[status] polling failed:` | status.claude.com is unreachable — the popup simply hides the section |
+| `[status] unknown response format … JSON received:` | Statuspage changed shape — fix `parseStatus()`, with a test in `test-status-source.js` |
+| `[autocontinue] polling failed:` | the worker's loop could not read storage or list the tabs |
 
-Les dossiers, eux, parlent dans la console **de la page** claude.ai, une seule fois par cause
-pour ne pas noyer la console à chaque re-rendu :
+The folders, for their part, speak in the claude.ai **page** console, once per cause
+so as not to flood the console on every re-render:
 
-| Message | Ce que ça veut dire |
+| Message | What it means |
 | --- | --- |
-| `[folders] conteneur « .dframe-nav-scroll » introuvable après 8 s` | la sidebar a changé — rien n'a été inséré, voir le tableau des sélecteurs |
-| `[folders] wrapper « .dframe-recents-by-mode » introuvable` | dégradé, pas bloquant : les dossiers sont insérés directement dans le conteneur scrollable |
-| `[folders] aucun « .df-drag-shiftable » au-dessus du lien` | le lien est trouvé mais plus le wrapper déplaçable : plus rien n'est rangé |
-| `[export] aucun point d'ancrage dans l'en-tête : ni « …-share » ni « …-actions-slot »` | ni le bouton « Partager » ni le slot de repli — aucun bouton inséré. Le message dit si l'en-tête `chat-header` était présent : **présent** = sa structure interne a changé, **absent** = ce contexte n'a pas d'en-tête de conversation reconnu |
-| `[export] bouton « …-share » introuvable` | dégradé, pas bloquant : le bouton prend un style neutre au lieu de copier celui du site |
-| `[export] format de réponse inconnu … JSON reçu :` | la réponse de conversation a changé de forme — corriger `parseConversation()`, avec un test dans `test-export.js` |
-| `[export] échec : …` | l'export s'est arrêté avant d'écrire quoi que ce soit ; la même phrase s'affiche en toast dans la page |
-| `[theme] etat lu (<cause>)` | ⏳ **temporaire** : une lecture du storage, avec sa cause (`chargement initial` ou `storage.onChanged`) |
-| `[theme] audit — demande=… calcule=… concordant=…` | ⏳ **temporaire** : `concordant` dit si le navigateur applique vraiment la couleur demandée — voir le tableau de lecture dans la section Thème |
-| `[theme] balise RETIREE du DOM à …` | ⏳ **temporaire** : le site a retiré notre `<style>`. Si ça apparaît pendant une génération, l'hypothèse « re-rendu pendant le streaming » est confirmée et `THEME_REINJECT` peut passer à `true` |
+| `[folders] container ".dframe-nav-scroll" not found after 8 s` | the sidebar changed — nothing was inserted, see the selector table |
+| `[folders] wrapper ".dframe-recents-by-mode" not found` | degraded, not blocking: the folders are inserted directly into the scrollable container |
+| `[folders] no ".df-drag-shiftable" above the conversation link` | the link is found but not the movable wrapper anymore: nothing is filed |
+| `[export] no anchor point in the header: neither "…-share" nor "…-actions-slot"` | neither the "Partager" button nor the fallback slot — no button inserted. The message says whether the `chat-header` header was present: **present** = its internal structure changed, **absent** = this context has no recognized conversation header |
+| `[export] button "…-share" not found` | degraded, not blocking: the button takes a neutral style instead of copying the site's one |
+| `[export] unknown response format … JSON received:` | the conversation response changed shape — fix `parseConversation()`, with a test in `test-export.js` |
+| `[export] failure: …` | the export stopped before writing anything; the same sentence is shown as a toast in the page |
+| `[theme] state read (<cause>)` | Pending, **temporary**: a storage read, with its cause (`initial load` or `storage.onChanged`) |
+| `[theme] audit — requested=… computed=… matches=…` | Pending, **temporary**: `matches` says whether the browser really applies the requested color — see the reading table in the Theme section |
+| `[theme] tag REMOVED from the DOM at …` | Pending, **temporary**: the site removed our `<style>`. If this appears during a generation, the "re-render during streaming" hypothesis is confirmed and `THEME_REINJECT` can go to `true` |
 
-#### Pourquoi l'auto-continue ne clique pas
+#### Why auto-continue does not click
 
-Deux consoles, deux moitiés de la réponse. **Commencer par celle du service worker** : c'est la
-seule qui parle quand la fonctionnalité est éteinte — dans ce cas rien d'autre ne tourne, ni le
-sondage ni le `MutationObserver` de la page.
+Two consoles, two halves of the answer. **Start with the service worker's one**: it is the
+only one that speaks when the feature is off — in that case nothing else runs, neither the
+polling nor the page's `MutationObserver`.
 
-| Console du service worker | Ce que ça veut dire |
+| Service worker console | What it means |
 | --- | --- |
-| `boucle arrêtée : auto-continue DÉSACTIVÉ (autoContinueEnabled absent ou false)` | la case du popup n'est pas cochée — **rien** ne tourne tant que cette clé n'est pas à `true` |
-| `boucle arrêtée : en pause` | bouton « Pause » du popup |
-| `boucle arrêtée : compteur maximum atteint : 5 / 5` | « Réinitialiser », ou passer le maximum à 0 (illimité) |
-| `actif, mais aucun onglet claude.ai ouvert` | la boucle tourne, il n'y a personne à sonder |
-| `actif — sondage de N onglet(s) toutes les 5 s` | tout va bien de ce côté : passer à la console de l'onglet |
-| `onglet 42 : pas de content script (recharger l'onglet)` | onglet ouvert avant le chargement de l'extension |
+| `loop stopped: auto-continue DISABLED (autoContinueEnabled missing or false)` | the popup checkbox is not ticked — **nothing** runs as long as that key is not `true` |
+| `loop stopped: paused` | the popup's « Pause » button |
+| `loop stopped: maximum counter reached: 5 / 5` | « Réinitialiser », or set the maximum to 0 (unlimited) |
+| `active, but no claude.ai tab open` | the loop is running, there is nobody to poll |
+| `active — polling N tab(s) every 5 s` | all is well on this side: move on to the tab's console |
+| `tab 42: no content script (reload the tab)` | tab opened before the extension was loaded |
 
-Une fois la boucle active, le détail est dans la console **de l'onglet**. Elle ne parle que
-lorsqu'un bouton « Continue » est visible — ou qu'un bouton au bon libellé vient d'être écarté —
-et ne répète jamais un état identique :
+Once the loop is active, the detail is in the **tab's** console. It only speaks
+when a "Continue" button is visible — or when a button with the right label has just been discarded —
+and never repeats an identical state:
 
 ```
 [autocontinue] diagnostic (sw)
-  bouton « Continue »  : trouvé
-  messages assistant   : 12 lus
-  dernier message lu   : sélecteur .group\/message-row, index 11/11 — ancré au bouton Continue (fiable)
-  phrase de limite     : ABSENTE du dernier message
-  phrase plus haut     : non
-  compteur             : 0 / illimité
-  actif / en pause     : true / false
-  DÉCISION             : ignore — pas de phrase de limite dans le dernier message
-  dernier message (500 premiers caractères), pour relever la phrase réelle :
+  "Continue" button    : found
+  assistant messages   : 12 read
+  last message read    : selector .group\/message-row, index 11/11 — anchored to the Continue button (reliable)
+  limit phrase         : ABSENT from the last message
+  phrase earlier       : no
+  counter              : 0 / unlimited
+  active / paused      : true / false
+  DECISION             : ignores — no limit phrase in the last message
+  last message (first 500 characters), to collect the real phrase:
     "Claude a atteint la limite d’utilisation d’outils pour cette réponse."
 ```
 
-Les lignes qui tranchent :
+The lines that decide:
 
-- **`bouton « Continue » : ÉCARTÉ — n au bon libellé mais jugé invisible`** — le bouton existe
-  mais `offsetParent` est nul. C'est le test de visibilité qu'il faut alors revoir, pas la
-  détection de phrase.
-- **`dernier message lu : … — ancré au bouton Continue (fiable)`** confirme que le texte capturé
-  vient bien de la ligne qui contient le bouton visible, pas d'un élément assistant-like plus bas
-  dans le document (carte de citation, aperçu d'historique…) qui aurait usurpé la position
-  « dernier » simplement en arrivant en dernier dans `querySelectorAll()`. Si la ligne dit à la
-  place **`dernier trouvé dans l'ordre du DOM (bouton non imbriqué — hypothèse à vérifier)`**,
-  l'ancrage a échoué et le texte lu n'est pas garanti correspondre au bon message — à vérifier à
-  l'œil avant de conclure quoi que ce soit sur la phrase de limite.
-- **`phrase de limite : ABSENTE du dernier message`** suivi du message recopié — c'est le cas
-  attendu sur une **interface en français**, dont aucune variante n'est connue (voir « Limites
-  connues »). Le message recopié est là précisément pour relever la formulation réelle et
-  l'ajouter à `AC_LIMIT_PHRASES`, avec un test dans `test-autocontinue.js`. C'est la seule
-  façon correcte de la compléter : relevée, jamais devinée.
+- **`"Continue" button    : DISCARDED — n with the right label but judged invisible`** — the button exists
+  but `offsetParent` is null. It is then the visibility test that needs revisiting, not
+  phrase detection.
+- **`last message read    : … — anchored to the Continue button (reliable)`** confirms that the captured text
+  does come from the row containing the visible button, not from an assistant-like element lower
+  in the document (citation card, history preview…) that would have usurped the
+  "last" position simply by coming last in `querySelectorAll()`. If the line says
+  **`last one found in DOM order (button not nested — assumption to verify)`** instead,
+  the anchoring failed and the text read is not guaranteed to correspond to the right message — to be checked
+  by eye before concluding anything about the limit phrase.
+- **`limit phrase         : ABSENT from the last message`** followed by the copied-out message — this is the case
+  expected on a **French interface**, for which no variant is known (see "Limites
+  connues"). The copied-out message is there precisely to collect the real wording and
+  add it to `AC_LIMIT_PHRASES`, with a test in `test-autocontinue.js`. That is the only
+  correct way to complete it: collected, never guessed.
 
-Chaque continuation écrit par ailleurs `[autocontinue] continuation 3 (page|sw)`, avec l'origine
-du déclencheur.
-Pour savoir pourquoi *rien* ne se passe, appeler `acTick('manuel')` dans cette même console,
-**après avoir basculé le sélecteur de contexte** de *top* vers celui de l'extension (les
-content scripts vivent dans un monde isolé) : la fonction renvoie toujours sa raison en clair (`aucun bouton Continue visible`,
-`phrase de limite déjà présente plus haut dans la conversation`, `compteur maximum atteint (10)`,
-`pas de content script (recharger l'onglet)`…).
+Each continuation additionally writes `[autocontinue] continuation 3 (page|sw)`, with the origin
+of the trigger.
+To find out why *nothing* is happening, call `acTick('manual')` in that same console,
+**after switching the context selector** from *top* to the extension's one (the
+content scripts live in an isolated world): the function always returns its reason in plain words (`no Continue button visible`,
+`limit phrase already present earlier in the conversation`, `maximum counter reached (10)`,
+`no content script (reload the tab)`…).
 
-`inject.js` a un `var DEBUG = false;` en tête — le passer à `true` fait sortir `[usage] tap
-start` / `tap end` dans la console de **la page claude.ai**. Ça ne concerne plus que
-l'estimation de contexte.
+`inject.js` has a `var DEBUG = false;` at the top — setting it to `true` makes `[usage] tap
+start` / `tap end` come out in the console of **the claude.ai page**. It now only concerns
+context estimation.
 
-> **Après avoir rechargé l'extension, recharger aussi l'onglet claude.ai.** Sinon les content
-> scripts de l'onglet sont orphelins et le relais de secours ne répond plus (le service
-> worker le signale explicitement).
+> **After reloading the extension, reload the claude.ai tab too.** Otherwise the tab's content
+> scripts are orphaned and the fallback relay no longer answers (the service
+> worker reports it explicitly).
 
-Pour tester les états dégradés sans attendre une vraie limite, depuis la console du service
-worker (`chrome://extensions` → *service worker*) :
+To test the degraded states without waiting for a real limit, from the service worker
+console (`chrome://extensions` → *service worker*):
 
 ```js
 chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
@@ -1229,71 +1228,71 @@ chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
 } } } });
 ```
 
-#### Provoquer une notification de reset sans attendre un vrai reset
+#### Triggering a reset notification without waiting for a real reset
 
-Le bloc ci-dessus ne suffit pas pour le reset : `isReset()` compare le sondage **précédent** au
-sondage courant, donc il faut **deux `set` successifs** — c'est la paire `oldValue`/`newValue` de
-`chrome.storage.onChanged` qui porte l'information, pas un état isolé. Toujours depuis la console
-du service worker :
+The block above is not enough for the reset: `isReset()` compares the **previous** poll to the
+current poll, so **two successive `set`** are needed — it is the `oldValue`/`newValue` pair of
+`chrome.storage.onChanged` that carries the information, not an isolated state. Still from the service
+worker console:
 
 ```js
-// 1. Notifications actives, et compteurs pré-calés pour que SEULE la notif de reset sorte
-//    (threshold: 75 empêche l'étape 2 de déclencher en plus un franchissement de seuil).
+// 1. Notifications active, and counters pre-set so that ONLY the reset notification comes out
+//    (threshold: 75 prevents step 2 from also triggering a threshold crossing).
 await chrome.storage.local.set({
   settings: { notifications: true },
   notifyState: { windows: { '5h': { threshold: 75, overLimit: false },
                             '7d': { threshold: 0,  overLimit: false } }, overage: false }
 });
 
-// 2. État « avant » : fenêtre 5 h bien remplie, borne A.
+// 2. "Before" state: 5 h window well filled, boundary A.
 const A = Math.floor(Date.now() / 1000) + 3600;
 await chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
   '5h': { utilization: 0.76, resets_at: A },
   '7d': { utilization: 0.43, resets_at: A + 200000 }
 } } } });
 
-// 3. État « après » : nouvelle borne ET chute franche -> reset détecté, une notification.
+// 3. "After" state: new boundary AND sharp drop -> reset detected, one notification.
 await chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
   '5h': { utilization: 0.02, resets_at: A + 18000 },
   '7d': { utilization: 0.43, resets_at: A + 200000 }
 } } } });
 ```
 
-Attendu : **une seule** notification, « Session — 5 h : reset effectué ». La fenêtre 7 j garde sa
-borne, donc elle ne notifie pas — ce qui vérifie du même coup que les deux fenêtres sont bien
-évaluées séparément.
+Expected: **a single** notification, "Session — 5 h : reset effectué". The 7 d window keeps its
+boundary, so it does not notify — which at the same time checks that the two windows are indeed
+evaluated separately.
 
-⚠️ Trois conditions faciles à rater, toutes imposées par `isReset()` :
+Warning: three conditions easy to miss, all imposed by `isReset()`:
 
-| Contrainte | Pourquoi | Conséquence si ratée |
+| Constraint | Why | Consequence if missed |
 | --- | --- | --- |
-| `utilization` en **fraction 0-1** | c'est la forme *après* `parseUsage()`, qui divise par 100 | `0.76` écrit `76` → `utilOf()` borne à 1, la chute n'est plus détectable |
-| moins de **10 min** entre les étapes 2 et 3 | `RESET_MAX_AGE_MS` : au-delà, Chrome dormait et on annoncerait un reset vieux de plusieurs heures | aucune notification |
-| `resets_at` **différent** entre les deux | une chute seule est une correction de mesure, pas une nouvelle fenêtre | aucune notification |
+| `utilization` as a **0-1 fraction** | this is the form *after* `parseUsage()`, which divides by 100 | `0.76` written `76` → `utilOf()` clamps to 1, the drop is no longer detectable |
+| less than **10 min** between steps 2 and 3 | `RESET_MAX_AGE_MS`: beyond that, Chrome was asleep and we would announce a reset several hours old | no notification |
+| `resets_at` **different** between the two | a drop alone is a measurement correction, not a new window | no notification |
 
-Le sondage réel tourne toutes les minutes et réécrit `usage` : enchaîner les trois étapes sans
-traîner, sinon un vrai sondage s'intercale entre 2 et 3 et casse la paire.
+The real polling runs every minute and rewrites `usage`: chain the three steps without
+dawdling, otherwise a real poll slips in between 2 and 3 and breaks the pair.
 
-Contrôles négatifs, à partir de l'étape 2 — dans les deux cas **rien** ne doit apparaître :
+Negative controls, starting from step 2 — in both cases **nothing** must appear:
 
 ```js
-// Chute franche mais borne INCHANGÉE -> correction de mesure, pas un reset.
+// Sharp drop but UNCHANGED boundary -> measurement correction, not a reset.
 await chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
   '5h': { utilization: 0.02, resets_at: A }, '7d': { utilization: 0.43, resets_at: A + 200000 }
 } } } });
 
-// Nouvelle borne mais SANS chute -> l'API a juste bougé sa borne.
+// New boundary but WITHOUT a drop -> the API just moved its boundary.
 await chrome.storage.local.set({ usage: { updatedAt: Date.now(), data: { windows: {
   '5h': { utilization: 0.74, resets_at: A + 18000 }, '7d': { utilization: 0.43, resets_at: A + 200000 }
 } } } });
 ```
 
-Pour rejouer le test, il suffit de relancer depuis l'étape 2 : `A` est recalculé sur l'horloge,
-donc la nouvelle borne diffère de celle mémorisée dans `notifyState.notifiedReset` et l'anti-spam
-ne bloque pas. Rejouer la **même** borne, en revanche, ne notifie qu'une fois — c'est justement
-ce que garantit l'anti-spam.
+To replay the test, just restart from step 2: `A` is recomputed on the clock,
+so the new boundary differs from the one memorized in `notifyState.notifiedReset` and the anti-spam
+does not block. Replaying the **same** boundary, on the other hand, notifies only once — which is exactly
+what the anti-spam guarantees.
 
-Même méthode pour la section « Statut », qui est le plus souvent verte :
+Same method for the "Statut" section, which is most often green:
 
 ```js
 chrome.storage.local.set({ status: { updatedAt: Date.now(), data: {
@@ -1306,344 +1305,344 @@ chrome.storage.local.set({ status: { updatedAt: Date.now(), data: {
 } } });
 ```
 
-## Portage Firefox
+## Firefox port
 
-**Manifest unique**, pas deux dossiers : `background.service_worker` (Chrome) et
-`background.scripts` (Firefox) cohabitent dans le même `manifest.json`. Chrome émet le seul
-avertissement `'background.scripts' requires manifest version of 2 or lower`, charge
-normalement et continue d'utiliser son service worker — vérifié en mesurant que `compat.js`
-n'y est **pas** évalué. Deux manifests séparés auraient imposé de dupliquer 16 fichiers sans
+**A single manifest**, not two folders: `background.service_worker` (Chrome) and
+`background.scripts` (Firefox) coexist in the same `manifest.json`. Chrome emits the single
+warning `'background.scripts' requires manifest version of 2 or lower`, loads
+normally and keeps using its service worker — verified by measuring that `compat.js`
+is **not** evaluated there. Two separate manifests would have meant duplicating 16 files without a
 build step.
 
-Le plancher `browser_specific_settings.gecko.strict_min_version` est à **128.0**, et il vient
-de `world: "MAIN"` (support Firefox 128+) — pas du comportement de `chrome.*`.
+The `browser_specific_settings.gecko.strict_min_version` floor is at **128.0**, and it comes
+from `world: "MAIN"` (Firefox 128+ support) — not from the behavior of `chrome.*`.
 
-### Trois pièges à ne pas re-deviner
+### Three pitfalls not to re-guess
 
-**1. La liste des scripts d'arrière-plan est doublée, et rien ne la synchronise.**
-`background` porte **deux** clés : `service_worker` (Chrome) et `scripts` (Firefox, qui ne
-supporte pas `service_worker` et instancie une **event page**). Les mêmes six fichiers sont donc
-listés **à deux endroits**, dans le même ordre : le tableau `scripts` du manifest, et les
-`importScripts()` en tête de `background.js`. En modifier un seul casse **un seul** des deux
-navigateurs — panne asymétrique, donc facile à ne pas voir. `importScripts` n'existant que dans
-un `WorkerGlobalScope`, il est protégé par `if (typeof importScripts === 'function')` : **ne pas
-retirer ce garde**, c'était le premier obstacle réel du portage.
+**1. The list of background scripts is duplicated, and nothing keeps it in sync.**
+`background` carries **two** keys: `service_worker` (Chrome) and `scripts` (Firefox, which does
+not support `service_worker` and instantiates an **event page**). The same six files are therefore
+listed **in two places**, in the same order: the manifest's `scripts` array, and the
+`importScripts()` at the top of `background.js`. Modifying only one breaks **only one** of the two
+browsers — an asymmetric failure, hence easy to miss. Since `importScripts` only exists in
+a `WorkerGlobalScope`, it is guarded by `if (typeof importScripts === 'function')`: **do not
+remove that guard**, it was the first real obstacle of the port.
 
-**2. `compat.js` se charge en premier, partout.** En tête du tableau `scripts`, en tête de
-chaque entrée `content_scripts` — sauf celle en `world: "MAIN"`, où aucune API d'extension
-n'existe et où il serait un no-op garanti — et en tête de `popup.html`. Il aliase `chrome` sur
-`browser`. C'est un **filet de sécurité, pas un correctif** : sur Firefox 153 `chrome.*` rend
-déjà des promesses, mais ce comportement n'est documenté nulle part (MDN dit seulement que
-`chrome.*` **accepte** les callbacks). Deux conséquences à ne pas oublier :
+**2. `compat.js` loads first, everywhere.** At the top of the `scripts` array, at the top of
+each `content_scripts` entry — except the one in `world: "MAIN"`, where no extension API
+exists and where it would be a guaranteed no-op — and at the top of `popup.html`. It aliases `chrome` onto
+`browser`. It is a **safety net, not a fix**: on Firefox 153 `chrome.*` already returns
+promises, but that behavior is documented nowhere (MDN only says that
+`chrome.*` **accepts** callbacks). Two consequences not to forget:
 
-- après l'alias, `chrome.*` **est** `browser.*`, qui est promise-only : tout appel en **style
-  callback** devient suspect. Le dépôt n'en compte qu'**un**, `show()` dans `background.js`
-  (mesuré fonctionnel, mais ne pas en réintroduire d'autres) ;
-- le fichier est évalué **une fois par entrée `content_scripts`**, soit six fois par frame dans
-  le même monde isolé. Il doit rester **strictement idempotent** : aucun compteur, aucun log,
-  aucun effet de bord cumulatif.
+- after the alias, `chrome.*` **is** `browser.*`, which is promise-only: any call in **callback
+  style** becomes suspect. The repo has only **one**, `show()` in `background.js`
+  (measured functional, but do not reintroduce others);
+- the file is evaluated **once per `content_scripts` entry**, that is six times per frame in
+  the same isolated world. It must remain **strictly idempotent**: no counter, no log,
+  no cumulative side effect.
 
-**3. Le plancher 128 vient de `world: "MAIN"`, pas de `chrome.*`.** Ne pas l'abaisser en croyant
-qu'il protège les promesses. Sous Firefox 128, `world` est une clé inconnue, donc **ignorée** :
-`inject.js` atterrit dans le monde isolé, y patche le `fetch` du content script au lieu de celui
-de la page, et l'estimation de contexte cesse de fonctionner **silencieusement** — sans erreur,
-sans log, avec juste une pastille qui n'affiche jamais rien.
+**3. The 128 floor comes from `world: "MAIN"`, not from `chrome.*`.** Do not lower it believing
+it protects the promises. Under Firefox 128, `world` is an unknown key, hence **ignored**:
+`inject.js` lands in the isolated world, patches the content script's `fetch` there instead of the
+page's, and context estimation stops working **silently** — without an error,
+without a log, with just a badge that never shows anything.
 
-### Mesures faites
+### Measurements taken
 
-Toutes en conditions réelles, sur **Firefox 153.0** et **Chrome 150.0.7871.187**. Ce tableau
-existe parce que l'audit initial avait classé plusieurs de ces points « à vérifier » : trois
-des cinq se sont révélés sans objet, et c'est le genre de conclusion qu'on re-devine à tort si
-elle n'est pas écrite.
+All under real conditions, on **Firefox 153.0** and **Chrome 150.0.7871.187**. This table
+exists because the initial audit had classified several of these points "to be verified": three
+of the five turned out to be moot, and that is the kind of conclusion one wrongly re-guesses if
+it is not written down.
 
 | Point | Verdict |
 |---|---|
-| `importScripts()` en event page Firefox | ❌ **Confirmé bloquant.** `ReferenceError` dès la ligne 12 de `background.js` — c'est un appel de `WorkerGlobalScope`, absent d'une event page. D'où le garde `if (typeof importScripts === 'function')` |
-| `chrome.*` rend-il des promesses en Firefox ? | ✅ **Oui**, contrairement à ce que laisse croire la doc. Les ~29 chaînes `.then()` marchent telles quelles. Voir `compat.js` pour pourquoi on aliase quand même |
-| `OffscreenCanvas` + `action.setIcon({imageData})` | ✅ **Fonctionne**, y compris `convertToBlob()` + `btoa()`. Vérifié visuellement (icône réellement repeinte), pas seulement sur le retour d'API |
-| `notifications.create()` | ✅ **Fonctionne** — voir ci-dessous |
-| Sondage d'usage **tous onglets fermés** | ✅ **Fonctionne** — voir ci-dessous |
-| Cadence de l'**auto-continue** en arrière-plan | ✅ **5 s, comme sur Chrome** — mesuré sur 5 min seulement, voir la réserve ci-dessous |
-| **Déclenchement réel** de l'auto-continue (détection + clic) | ⚠️ **Non mesuré sur Firefox.** Trois tentatives de provoquer la limite de tool-use ont échoué : impossible d'atteindre les conditions du test, pas une mesure ratée — voir ci-dessous |
-| **Export** PDF et Markdown | ✅ **Fonctionne**, y compris dans une conversation de Projet — voir ci-dessous |
-| `world: "MAIN"` et `all_frames` | Supportés depuis Firefox 128, d'où le plancher |
-| `<input type="color">` dans le popup | ❌ **Confirmé bloquant** sur Firefox 153.0.3 : le popup se ferme à l'ouverture du sélecteur natif, le choix est perdu. Corrigé en retirant l'`input` — voir ci-dessous |
+| `importScripts()` in a Firefox event page | Failed: **confirmed blocking.** `ReferenceError` as early as line 12 of `background.js` — it is a `WorkerGlobalScope` call, absent from an event page. Hence the `if (typeof importScripts === 'function')` guard |
+| Does `chrome.*` return promises on Firefox? | OK: **yes**, contrary to what the docs suggest. The ~29 `.then()` chains work as-is. See `compat.js` for why we alias anyway |
+| `OffscreenCanvas` + `action.setIcon({imageData})` | OK: **works**, including `convertToBlob()` + `btoa()`. Verified visually (icon actually repainted), not only on the API return value |
+| `notifications.create()` | OK: **works** — see below |
+| Usage polling with **all tabs closed** | OK: **works** — see below |
+| **Auto-continue** cadence in the background | OK: **5 s, as on Chrome** — measured over 5 min only, see the reservation below |
+| **Real triggering** of auto-continue (detection + click) | Warning: **not measured on Firefox.** Three attempts to provoke the tool-use limit failed: impossible to reach the test conditions, not a failed measurement — see below |
+| **Export** to PDF and Markdown | OK: **works**, including in a Project conversation — see below |
+| `world: "MAIN"` and `all_frames` | Supported since Firefox 128, hence the floor |
+| `<input type="color">` in the popup | Failed: **confirmed blocking** on Firefox 153.0.3: the popup closes when the native picker opens, the choice is lost. Fixed by removing the `input` — see below |
 
-#### `notifications.create()` : trois risques suspectés, aucun réel
+#### `notifications.create()`: three suspected risks, none real
 
-L'audit classait ce point **MOYEN, à vérifier** : la doc Mozilla ne liste que `type`, `title`,
-`message` et `iconUrl` comme propriétés supportées, et la validation de schéma WebExtension est
-réputée stricte. Trois causes de rupture étaient plausibles sur la seule ligne de `show()` :
+The audit classified this point **MEDIUM, to be verified**: the Mozilla docs only list `type`, `title`,
+`message` and `iconUrl` as supported properties, and WebExtension schema validation is
+reputedly strict. Three causes of breakage were plausible on `show()`'s single line:
 
-1. le `priority: 2`, propriété non documentée côté Firefox ;
-2. l'id `''` (chaîne vide) en premier argument, là où Firefox permet plutôt d'**omettre** l'id ;
-3. le **style callback** de cet appel — c'est le **seul** du dépôt, tout le reste est en
-   `.then()` — alors que `compat.js` fait de `chrome.*` un alias de `browser.*`, promise-only
-   et réputé refuser un argument surnuméraire.
+1. the `priority: 2`, an undocumented property on the Firefox side;
+2. the `''` id (empty string) as the first argument, where Firefox rather allows **omitting** the id;
+3. the **callback style** of this call — it is the **only** one in the repo, everything else is in
+   `.then()` — whereas `compat.js` makes `chrome.*` an alias of `browser.*`, promise-only
+   and reputed to refuse a superfluous argument.
 
-**Les quatre variantes réussissent sur Firefox 153**, et les quatre notifications s'affichent
-réellement à l'écran (vérifié visuellement, pas seulement `OK` en console). **Rien à corriger
-dans `show()`.** L'audit avait sur-estimé le risque sur ce point précis.
+**The four variants succeed on Firefox 153**, and the four notifications really appear
+on screen (verified visually, not only `OK` in the console). **Nothing to fix
+in `show()`.** The audit had overestimated the risk on this precise point.
 
-#### Sondage d'usage tous onglets fermés : les cookies passent
+#### Usage polling with all tabs closed: the cookies get through
 
-L'audit redoutait que le `fetch` direct de `fetchJson()`, émis depuis une origine
-`moz-extension://`, soit une requête **cross-site** dont les cookies `SameSite=Lax/Strict` de
-claude.ai seraient écartés — ce qui aurait forcé le repli permanent sur `fetchViaTab()`, donc
-la perte de la promesse « le sondage marche onglet fermé ».
+The audit feared that `fetchJson()`'s direct `fetch`, emitted from a
+`moz-extension://` origin, would be a **cross-site** request whose claude.ai `SameSite=Lax/Strict`
+cookies would be discarded — which would have forced a permanent fallback to `fetchViaTab()`, hence
+the loss of the "polling works with the tab closed" promise.
 
-**Cette crainte ne se vérifie pas sur Firefox 153** : tous onglets claude.ai fermés (compté à zéro avant le test),
-un `pollUsage()` forcé écrit une donnée fraîche à 0 s, sans un seul avertissement en console —
-donc sans passer par le relais. Le comportement est le même que sur Chrome. Rien à changer.
+**This fear is not confirmed on Firefox 153**: with all claude.ai tabs closed (counted at zero before the test),
+a forced `pollUsage()` writes fresh data at 0 s, without a single console warning —
+hence without going through the relay. The behavior is the same as on Chrome. Nothing to change.
 
-#### Cadence de l'auto-continue : 5 s tenues, mais mesurées sur 5 min seulement
+#### Auto-continue cadence: 5 s held, but measured over 5 min only
 
-Le `setInterval` de 5 s d'`autocontinue-bg.js` repose sur une hypothèse **Chrome** : chaque
-`executeScript` repousse la mise en veille, donc la boucle s'auto-entretient. Rien ne
-garantissait ça sur une event page Firefox, réputée mourir après quelques dizaines de secondes
-d'inactivité ([bug 1851373](https://bugzilla.mozilla.org/show_bug.cgi?id=1851373)).
+`autocontinue-bg.js`'s 5 s `setInterval` rests on a **Chrome** assumption: each
+`executeScript` pushes the sleep back, so the loop is self-sustaining. Nothing
+guaranteed that on a Firefox event page, reputed to die after a few tens of seconds
+of inactivity ([bug 1851373](https://bugzilla.mozilla.org/show_bug.cgi?id=1851373)).
 
-Mesure sur Firefox 153, auto-continue actif, un onglet claude.ai ouvert, console d'arrière-plan
-**fermée** et Firefox minimisé pendant 5 min — les horodatages partaient en `storage` justement
-parce qu'une console attachée empêche la mise en veille et aurait garanti un faux positif :
+Measurement on Firefox 153, auto-continue active, one claude.ai tab open, background console
+**closed** and Firefox minimized for 5 min — the timestamps went to `storage` precisely
+because an attached console prevents sleep and would have guaranteed a false positive:
 
 ```
 ticks : 66 | duree : 303 s | cadence moyenne : 4,7 s/tick | ecarts <= 15 s : 65/65
 ```
 
-**La boucle n'est pas morte une seule fois.** Les quelques écarts à 0 s sont les appels
-supplémentaires venus du réveil par l'alarme `usage-poll`, qui rejoue le premier niveau du
-fichier — ils confirment le chemin de résurrection, ils ne le contredisent pas.
+**The loop did not die a single time.** The few 0 s gaps are the additional
+calls coming from the wake-up by the `usage-poll` alarm, which replays the top level of the
+file — they confirm the resurrection path, they do not contradict it.
 
-⚠️ **Réserve à ne pas gommer** : c'est mesuré sur **5 minutes**, dans **une** configuration.
-Ça ne dit rien d'une inactivité de plusieurs heures, ni du comportement sous pression mémoire
-ou avec d'autres extensions actives. Le résultat autorise à ne rien changer aujourd'hui, pas à
-conclure que Firefox ne recycle jamais son event page.
+Warning: **a reservation not to erase**: this is measured over **5 minutes**, in **one** configuration.
+It says nothing about an inactivity of several hours, nor about behavior under memory pressure
+or with other extensions active. The result allows changing nothing today, not
+concluding that Firefox never recycles its event page.
 
-#### L'auto-continue n'a jamais été vu **cliquer** sur Firefox
+#### Auto-continue has never been seen **clicking** on Firefox
 
-À ne pas confondre avec la mesure ci-dessus, qui porte sur la **boucle** : on a établi
-qu'`acTick()` est bien rappelé toutes les 5 s sur une event page Firefox. On n'a **pas** établi
-ce qui se passe quand ce tick tombe sur une vraie réponse arrêtée par la limite de tool-use,
-parce que cette situation n'a jamais pu être provoquée.
+Not to be confused with the measurement above, which is about the **loop**: we established
+that `acTick()` is indeed called back every 5 s on a Firefox event page. We have **not** established
+what happens when that tick falls on a real reply stopped by the tool-use limit,
+because that situation could never be provoked.
 
-**Trois tentatives, trois échecs** — recherches web ciblées puis passage par un connecteur :
-Claude répond efficacement et n'atteint jamais la limite d'outils dans un seul tour. C'est une
-**impossibilité de réunir les conditions du test**, pas un échec de mesure : il n'y a pas de
-résultat négatif à consigner, il n'y a pas eu de test.
+**Three attempts, three failures** — targeted web searches then going through a connector:
+Claude answers efficiently and never reaches the tool limit in a single turn. It is an
+**impossibility of assembling the test conditions**, not a failed measurement: there is no
+negative result to record, there was no test.
 
-Ce qui borne la portée de ce trou :
+What bounds the extent of this gap:
 
-- **Le mécanisme de détection est du code strictement partagé** entre Chrome et Firefox, et ce
-  portage ne l'a **pas modifié**. Les deux conditions cumulées — bouton `Continue` visible **et**
-  phrase de limite dans le seul dernier message assistant — vivent dans `autocontinue.js` et
-  `autocontinue-source.js`, sans une seule branche par navigateur. Elles restent couvertes par
-  `node test-autocontinue.js` et `node test-autocontinue-dom.js`, qui tournent hors navigateur.
-- **Le point de vigilance Firefox-spécifique de l'audit initial portait sur l'action du clic**,
-  pas sur la détection : la crainte était qu'un clic synthétique n'atteigne pas un bouton géré
-  par React, et que le contournement habituel — `document.execCommand('insertText')` — soit
-  nécessaire. ⚠️ **Cette crainte vise du code que ce dépôt n'a pas** : `acTick()` appelle
-  `button.click()` et rien d'autre (`autocontinue.js`), et `execCommand` en est **volontairement
-  absent** (voir *Limites connues*). Le risque résiduel se réduit donc à « un `click()` sur ce
-  bouton précis produit-il l'effet attendu sur Firefox ? » — plus étroit que l'audit ne le
-  laissait croire, mais **jamais vérifié en conditions réelles**, faute d'avoir pu déclencher la
+- **The detection mechanism is strictly shared code** between Chrome and Firefox, and this
+  port did **not** modify it. The two cumulative conditions — visible `Continue` button **and**
+  limit phrase in the last assistant message only — live in `autocontinue.js` and
+  `autocontinue-source.js`, without a single per-browser branch. They stay covered by
+  `node test-autocontinue.js` and `node test-autocontinue-dom.js`, which run outside a browser.
+- **The initial audit's Firefox-specific point of concern was about the click action**,
+  not about detection: the fear was that a synthetic click would not reach a button managed
+  by React, and that the usual workaround — `document.execCommand('insertText')` — would be
+  necessary. Warning: **that fear targets code this repo does not have**: `acTick()` calls
+  `button.click()` and nothing else (`autocontinue.js`), and `execCommand` is **deliberately
+  absent** from it (see *Limites connues*). The residual risk therefore reduces to "does a `click()` on that
+  precise button produce the expected effect on Firefox?" — narrower than the audit
+  suggested, but **never verified under real conditions**, for lack of being able to trigger the
   situation.
 
-**À vérifier de façon opportuniste**, la prochaine fois que la limite de tool-use est atteinte
-naturellement en usage réel sur Firefox — c'est le seul moyen connu d'y arriver. Le journal de
-diagnostic de l'onglet (bouton, phrase, compteur, décision, message recopié) suffit alors à
-trancher sans rien instrumenter de plus.
+**To be checked opportunistically**, the next time the tool-use limit is reached
+naturally in real use on Firefox — it is the only known way to get there. The tab's
+diagnostic journal (button, phrase, counter, decision, copied-out message) is then enough to
+decide without instrumenting anything more.
 
-#### Export : l'iframe 0×0 s'imprime, et l'ancrage tient dans un Projet
+#### Export: the 0×0 iframe prints, and the anchoring holds in a Project
 
-Deux doutes distincts sur cette fonctionnalité. Le premier : `exExportPdf()` imprime une iframe
-de **0×0** (`srcdoc`, puis `contentWindow.print()`), et rien ne garantissait que Firefox accepte
-un document de taille nulle. Le second : le bouton s'ancre sur « Partager », pas sur le slot
-`div#dframe-header-actions-slot` — un ancrage qui avait déjà cassé une fois en conversation de
-Projet.
+Two distinct doubts about this feature. The first: `exExportPdf()` prints a **0×0**
+iframe (`srcdoc`, then `contentWindow.print()`), and nothing guaranteed that Firefox would accept
+a document of zero size. The second: the button anchors on "Partager", not on the
+`div#dframe-header-actions-slot` slot — an anchoring that had already broken once in a
+Project conversation.
 
-**Les deux tiennent sur Firefox 153** : `print()` s'exécute sans exception, et l'export Markdown
-a été vérifié à la fois sur une conversation normale **et** dans un Projet. Le repli `try/catch`
-et son toast « Impression impossible — l'export Markdown reste disponible » n'ont pas eu à
-servir ; ils restent en place.
+**Both hold on Firefox 153**: `print()` runs without an exception, and the Markdown export
+was verified both on a normal conversation **and** in a Project. The `try/catch` fallback
+and its toast "Impression impossible — l'export Markdown reste disponible" did not have to
+be used; they stay in place.
 
-#### Le sélecteur de couleur natif tue le popup (Firefox)
+#### The native color picker kills the popup (Firefox)
 
-**Symptôme, constaté sur Firefox 153.0.3 / macOS** : cliquer la pastille de couleur d'accent
-ferme le popup de l'extension. Le sélecteur du système reste ouvert, mais la couleur choisie
-n'arrive nulle part — le document qui l'attendait n'existe plus. Chrome, lui, garde son popup.
+**Symptom, observed on Firefox 153.0.3 / macOS**: clicking the accent color swatch
+closes the extension popup. The system picker stays open, but the chosen color
+arrives nowhere — the document that was waiting for it no longer exists. Chrome, for its part, keeps its popup.
 
-**Cause** : un popup d'action est un *panel* à fermeture automatique. Il se ferme à la perte de
-focus, et le sélecteur de couleur de macOS est une **fenêtre**. C'est le [bug Mozilla
-1292701](https://bugzilla.mozilla.org/show_bug.cgi?id=1292701) (« Autoclose popups shouldn't
-close when they open a modal dialog »), ouvert depuis 2016, 5 doublons, un correctif *landé puis
-retiré* pour régression Windows. Le doublon [1713107](https://bugzilla.mozilla.org/show_bug.cgi?id=1713107)
-décrit exactement notre cas. Ça vaut pour **tout** contrôle ouvrant une fenêtre du système, y
-compris un `<input type="file">` : la règle à retenir n'est pas « pas de `type="color"` », c'est
-**aucun contrôle ouvrant une fenêtre du système dans le popup**.
+**Cause**: an action popup is an auto-closing *panel*. It closes on focus loss,
+and macOS's color picker is a **window**. This is [Mozilla bug
+1292701](https://bugzilla.mozilla.org/show_bug.cgi?id=1292701) ("Autoclose popups shouldn't
+close when they open a modal dialog"), open since 2016, 5 duplicates, a fix *landed then
+backed out* for a Windows regression. Duplicate [1713107](https://bugzilla.mozilla.org/show_bug.cgi?id=1713107)
+describes exactly our case. It applies to **any** control that opens a system window,
+including an `<input type="file">`: the rule to remember is not "no `type="color"`", it is
+**no control that opens a system window inside the popup**.
 
-Trois pistes examinées, dans l'ordre du moins invasif au plus :
+Three leads examined, from the least invasive to the most:
 
-| Piste | Verdict |
+| Lead | Verdict |
 | --- | --- |
-| **1. Un réglage qui empêche la fermeture** | ❌ **Aucun.** Rien côté extension : c'est le comportement du panel, pas une option du manifest. Côté navigateur il existe `ui.popup.disable_autohide`, mais c'est une préférence de **débogage** d'`about:config`, globale à tous les panels du navigateur et à activer à la main sur chaque machine — ce n'est pas un correctif livrable. La seule parade recommandée par Mozilla est de **sortir le contrôle du panel** (page d'options, onglet, ou `windows.create()`) : ça ne garde pas le popup ouvert, ça le remplace |
-| **2. Écouter `input` plutôt que `change`** | ❌ **Sans objet : c'était déjà le cas.** `renderTheme()` liait `input` **et** `change` depuis l'arrivée du thème, et le bug est constaté avec les deux en place. C'est structurel : le popup meurt à l'**ouverture** du sélecteur, donc avant toute modification de valeur — il n'y a aucun `input` à rattraper, seulement un document mort |
-| **3. Remplacer le contrôle** | ✅ **Retenu.** Huit pastilles + un champ hexadécimal libre : deux contrôles ordinaires, aucune fenêtre du système, donc plus rien qui puisse fermer le popup |
+| **1. A setting that prevents the closing** | Failed: **none.** Nothing on the extension side: it is the panel's behavior, not a manifest option. On the browser side there is `ui.popup.disable_autohide`, but it is an `about:config` **debugging** preference, global to all the browser's panels and to be enabled by hand on each machine — it is not a shippable fix. The only workaround Mozilla recommends is to **take the control out of the panel** (options page, tab, or `windows.create()`): that does not keep the popup open, it replaces it |
+| **2. Listening for `input` rather than `change`** | Failed: **moot: it was already the case.** `renderTheme()` bound `input` **and** `change` from the arrival of the theme, and the bug is observed with both in place. It is structural: the popup dies on the picker's **opening**, hence before any value change — there is no `input` to catch, only a dead document |
+| **3. Replacing the control** | OK: **retained.** Eight swatches + a free hexadecimal field: two ordinary controls, no system window, hence nothing left that could close the popup |
 
-**Appliqué aux deux navigateurs**, alors que Chrome n'a pas le problème. Garder le sélecteur
-natif côté Chrome aurait voulu dire un reniflage d'`userAgent` et **deux interfaces à maintenir
-en parallèle** pour un réglage secondaire — exactement la panne asymétrique dont ce document
-tient déjà la liste (cf. la double liste des scripts d'arrière-plan). Une seule interface, un
-seul chemin testé.
+**Applied to both browsers**, although Chrome does not have the problem. Keeping the native
+picker on the Chrome side would have meant sniffing the `userAgent` and **two interfaces to maintain
+in parallel** for a secondary setting — exactly the asymmetric failure this document
+already keeps a list of (cf. the duplicated list of background scripts). One interface, one
+tested path.
 
-⚠️ **Ce qu'on perd, et qui ne se voit pas dans un diff** : la pipette et les palettes du système,
-que le sélecteur natif offrait gratuitement sur Chrome. Le champ hexadécimal garde l'accès à
-n'importe quelle couleur, mais il faut la connaître. C'est le prix payé, il est assumé.
+Warning: **what we lose, and what does not show in a diff**: the system's eyedropper and palettes,
+which the native picker offered for free on Chrome. The hexadecimal field keeps access to
+any color, but you have to know it. That is the price paid, and it is accepted.
 
-**Ce qui n'a pas été mesuré** : la piste 1 a été écartée sur documentation (Bugzilla) et sur son
-coût d'interface, pas sur une mesure. En particulier, on n'a **pas** vérifié qu'une fenêtre
-`windows.create({type:'popup'})` survit, elle, au sélecteur natif — c'est très probable (une
-fenêtre n'est pas un panel à fermeture automatique), mais ça reste une déduction. Ça n'aurait
-changé la décision que si l'on avait accepté de remplacer le popup ancré par une fenêtre.
+**What was not measured**: lead 1 was ruled out on documentation (Bugzilla) and on its
+interface cost, not on a measurement. In particular, we did **not** check that a
+`windows.create({type:'popup'})` window survives the native picker — it is very likely (a
+window is not an auto-closing panel), but it remains a deduction. It would only have
+changed the decision if we had accepted replacing the anchored popup with a window.
 
-**Comment remesurer tout ça** si le comportement de Firefox change un jour : un popup mort n'a
-plus de console, donc il faut un journal qui survive au document. Instrumenter le contrôle avec
-un écouteur en capture sur `pointerdown`, `focus`, `input`, `change`, `blur`, `pagehide`, plus un
-battement toutes les 250 ms, et écrire l'ensemble dans `storage.local` en **un seul `set` par
-événement** (jamais un `get` + `set` : c'est précisément le document qui peut mourir entre les
-deux). La dernière ligne du journal, relue à l'ouverture suivante du popup, date la mort du
-document et dit quels événements l'ont précédée.
+**How to re-measure all this** if Firefox's behavior changes one day: a dead popup no longer has
+a console, so a journal that survives the document is needed. Instrument the control with
+a capture listener on `pointerdown`, `focus`, `input`, `change`, `blur`, `pagehide`, plus a
+heartbeat every 250 ms, and write the whole thing to `storage.local` in **a single `set` per
+event** (never a `get` + `set`: it is precisely the document that can die between the
+two). The journal's last line, reread on the popup's next opening, dates the document's death
+and says which events preceded it.
 
-### Réserves connues
+### Known reservations
 
-Aucune n'est bloquante, mais aucune ne doit être gommée en relisant ce document.
+None is blocking, but none must be erased when rereading this document.
 
-- **La cadence de l'auto-continue n'est mesurée que sur 5 minutes**, dans une seule
-  configuration (voir plus haut). Rien n'est établi pour une inactivité de plusieurs heures,
-  sous pression mémoire, ou avec d'autres extensions actives.
-- **L'auto-continue n'a jamais été vu cliquer sur Firefox** (voir plus haut). Trois tentatives
-  de provoquer la limite de tool-use ont échoué : la situation n'a pas pu être réunie, donc le
-  test n'a pas eu lieu. La détection est du code partagé et non modifié par le portage ; le seul
-  point réellement ouvert est l'effet d'un `button.click()` sur ce bouton React côté Firefox. À
-  saisir au vol le jour où la limite tombe naturellement en usage réel.
-- **L'assignabilité du global `chrome` n'a jamais été mesurée dans un content script Firefox.**
-  Elle l'a été dans la page d'arrière-plan (concluante), et l'instrumentation temporaire qui
-  devait trancher le cas du content script a été retirée avant que la mesure soit refaite. Si
-  le global s'y avérait non assignable, `compat.js` y retomberait sur son `catch` et les content
-  scripts resteraient sur le `chrome.*` natif — qui **fonctionne** sur Firefox 153. Ce serait
-  donc une couverture partielle de l'assurance (arrière-plan et popup oui, content scripts non),
-  **pas une panne**. Se remesure en remettant une ligne dans `compat.js` et en lisant la console
-  d'un onglet claude.ai.
-- **La survie d'une fenêtre `windows.create()` au sélecteur natif n'a pas été mesurée.** C'est
-  la seule variante de la piste 1 qui aurait pu marcher, et elle a été écartée sur son coût
-  d'interface (elle remplace le popup ancré), pas sur une mesure. À remesurer seulement si l'on
-  envisage un jour de sortir un contrôle du popup.
-- **Le linter AMO n'a pas été passé.** Si l'extension doit être signée pour une installation
-  permanente en Firefox release, il verra `background.service_worker` et émettra probablement son
-  propre avertissement. Avertissement ≠ rejet, mais ce n'est pas vérifié — c'est la seule chose
-  qui pourrait rouvrir le choix du manifest unique.
+- **The auto-continue cadence is only measured over 5 minutes**, in a single
+  configuration (see above). Nothing is established for an inactivity of several hours,
+  under memory pressure, or with other extensions active.
+- **Auto-continue has never been seen clicking on Firefox** (see above). Three attempts
+  to provoke the tool-use limit failed: the situation could not be assembled, so the
+  test did not take place. Detection is shared code, unmodified by the port; the only
+  genuinely open point is the effect of a `button.click()` on that React button on the Firefox side. To be
+  seized on the fly the day the limit falls naturally in real use.
+- **The assignability of the `chrome` global has never been measured in a Firefox content script.**
+  It has been in the background page (conclusive), and the temporary instrumentation that
+  was to settle the content script case was removed before the measurement was redone. If
+  the global turned out not to be assignable there, `compat.js` would fall back on its `catch` and the content
+  scripts would stay on the native `chrome.*` — which **works** on Firefox 153. It would
+  therefore be a partial coverage of the insurance (background and popup yes, content scripts no),
+  **not a failure**. Re-measured by putting a line back in `compat.js` and reading the console
+  of a claude.ai tab.
+- **The survival of a `windows.create()` window to the native picker was not measured.** It is
+  the only variant of lead 1 that could have worked, and it was ruled out on its interface
+  cost (it replaces the anchored popup), not on a measurement. To be re-measured only if we
+  ever consider taking a control out of the popup.
+- **The AMO linter was not run.** If the extension has to be signed for a permanent
+  installation in Firefox release, it will see `background.service_worker` and will probably emit its
+  own warning. A warning is not a rejection, but this is not verified — it is the only thing
+  that could reopen the single-manifest choice.
 
-## Limites connues
+## Known limitations
 
-- **Web/Service Workers = angle mort.** Un content script ne s'exécute pas dans les workers ;
-  tout `fetch` émis depuis un worker par claude.ai serait invisible. Aucune parade.
-- **Le canal `postMessage` n'est pas privé.** La page peut lire ces messages, et toute autre
-  extension à content script MAIN sur claude.ai aussi.
-- **Les endpoints internes de claude.ai ne sont pas stables.** Si le format d'usage change, il
-  n'y a que `usage-source.js` à corriger (et `test-usage-source.js` à mettre à jour). Pour
-  l'estimation de contexte, ce sont les regex d'URL en tête de `inject.js`. L'API Statuspage,
-  elle, est une API publique documentée : c'est la plus stable des trois.
-- **Le statut est vieux de 5 min au pire.** Le début d'un incident n'apparaît donc pas
-  instantanément ; le lien vers status.claude.com est là pour ça.
-- **`ORGS_PATH` n'est pas encore vérifié** — voir la section dédiée en haut.
-- **`severity` → `over_limit` est une extrapolation.** Seules `"warning"` et `"normal"` ont
-  été observées ; à corriger dans `statusFromSeverity()` si claude.ai utilise un autre mot
-  pour signaler une limite atteinte.
-- **Un compte multi-organisations prend la première** retournée par l'API, qui n'est pas
-  forcément l'active. À affiner dans `pickOrgId()` si le cas se présente.
-- Le sondage tourne à **1/minute**, plancher de `chrome.alarms` : une consommation faite en
-  quelques secondes n'apparaît qu'au sondage suivant. Le popup affiche l'âge de la valeur.
-- **Le thème ne s'applique qu'aux onglets ayant un content script** : un onglet claude.ai
-  ouvert avant l'installation ou le rechargement de l'extension ne réagit qu'une fois
-  rechargé. Même limite que le relais de secours du sondage.
-- **À `document_start` les valeurs d'origine ne sont pas encore lisibles** : seule la couleur
-  d'accent s'applique immédiatement. Poids, coins/ombres et police arrivent quelques centaines
-  de millisecondes plus tard, quand les feuilles du site sont parsées.
-- **L'auto-continue repose sur ce que claude.ai *affiche*, pas sur une API.** Trois points de
-  rupture, tous dans `autocontinue.js` : le repérage des messages de l'assistant — le conteneur
-  `.group/message-row` (liste **virtualisée** : un scan ponctuel ne voit que ce qui est monté),
-  filtré au rôle assistant par la présence de `[data-testid="action-bar-retry"]` ou
-  `[data-testid="action-bar-read-aloud"]` dans sa barre d'actions (`action-bar-edit` marque au
-  contraire un message utilisateur ; `action-bar-copy` existe sur les deux rôles et n'est
-  **jamais** utilisé comme critère) — la reconnaissance du bouton par son libellé (`Continue`,
-  qui couvre au passage `Continuer`) — et la lecture du texte lui-même, qui doit ignorer toute
-  copie masquée pour l'accessibilité (`[aria-hidden="true"]`, `.sr-only`, `visually-hidden`…),
-  sans quoi le même passage se retrouve doublé. Un remaniement du balisage les casse en silence —
-  la détection ne se déclenchera simplement plus.
-- **Le « dernier message » s'ancre au bouton *Continue*, pas à l'ordre du DOM.**
-  `querySelectorAll('.group/message-row')` rend ses résultats dans l'ordre du document, qui ne
-  correspond pas forcément à l'ordre visuel de la conversation : un élément assistant-like
-  ailleurs sur la page (carte de citation, aperçu…) placé *après* le vrai dernier message dans le
-  DOM usurperait sinon la position « dernier ». `acLastAssistantRow()` retrouve donc la ligne qui
-  contient réellement le bouton visible via `.closest()`, et ne se replie sur le dernier élément
-  du tableau que si le bouton n'est imbriqué dans aucune ligne connue — repli non vérifié sur le
-  vrai balisage, signalé comme tel dans le journal de diagnostic (`dernier message lu`).
-- **Les six phrases de limite ne sont connues qu'en anglais.** Sur une interface claude.ai en
-  français, la condition (2) échouera : aucune variante française n'a été capturée, et ce dépôt
-  ne code pas de valeur devinée. À relever sur un vrai message, puis à ajouter dans
-  `AC_LIMIT_PHRASES` avec un test dans `test-autocontinue.js`.
-- **`document.execCommand('insertText')` est volontairement absent.** La référence
-  [claude-autocontinue](https://github.com/timothy22000/claude-autocontinue) s'en sert pour
-  *écrire* dans l'éditeur (son mode « minimize tokens ») : c'est la seule méthode fiable pour
-  déclencher les événements synthétiques React/ProseMirror de l'input de claude.ai — un
-  `value = …` suivi d'un `dispatchEvent` ne suffit pas, React ne voit rien. C'est aussi une API
-  **dépréciée**, qui casserait si Anthropic changeait l'implémentation de l'éditeur, au même
-  titre que les autres pièges consignés ici. Cette extension ne tape donc **rien** : elle se
-  limite au clic sur le bouton, qui ne dépend pas de l'éditeur. Si un mode « prompt de
-  continuation » est ajouté un jour, il faudra passer par `execCommand` et hériter de cette
-  fragilité.
-- **Un onglet ouvert avant l'installation n'a pas d'auto-continue** : ni `MutationObserver`, ni
-  `acTick()` à réveiller par `executeScript`. Même limite que le relais de secours du sondage et
-  que le thème — recharger l'onglet.
-- **La boucle de 5 s maintient le service worker éveillé** tant qu'un onglet claude.ai est
-  ouvert *et* que l'auto-continue est actif, non en pause et sous son maximum. C'est le prix
-  d'une cadence sous le plancher d'une minute de `chrome.alarms` ; désactivé, rien n'est
-  maintenu en vie.
-- **Le compteur peut sous-compter avec plusieurs onglets.** `autoContinueCount` est incrémenté
-  par un lire-modifier-écrire côté page : deux onglets qui continuent à la même milliseconde
-  peuvent perdre une unité. Sans conséquence sur la limite elle-même, qui reste évaluée à
-  chaque tick.
-- **Les dossiers déplacent des nœuds que React gère.** C'est le risque assumé de la
-  fonctionnalité : si le site supprime un item (conversation effacée) pendant qu'il se trouve
-  dans un de nos blocs, son `removeChild` porte sur un nœud qui n'est plus chez lui et peut
-  lever. Rien ne le prévient depuis une extension — c'est le prix du choix « déplacer plutôt que
-  dupliquer », qui est ce qui préserve les clics et menus contextuels natifs. En cas de sidebar
-  cassée, vider `folders` et `folderAssignments` remet tout d'aplomb.
-- **Un léger scintillement au changement de conversation est normal** : le site re-rend sa
-  liste, remet brièvement les items rangés dans « Récents », et le `MutationObserver` les
-  redéplace 120 ms plus tard.
-- **Le compteur d'un dossier peut dépasser le nombre visible** : il compte les conversations
-  *assignées*, dont certaines ne sont pas encore chargées dans le DOM (pagination au scroll).
-- **L'implémentation de glissement de claude.ai n'a pas été identifiée** (HTML5 ou pointeur).
-  Les deux voies sont couvertes et s'excluent mutuellement, mais si un jour une conversation se
-  retrouvait **à la fois** rangée dans un dossier *et* épinglée nativement, ce serait le signe
-  que les deux systèmes se déclenchent ensemble. Le remède serait alors d'ajouter, après notre
-  dépôt, un retrait explicite de la zone d'épinglage — et non d'élargir l'interception, qui
-  casserait le drag natif ailleurs. Rien de tel n'a été observé.
-- **La forme de la réponse de conversation n'a jamais été capturée.** L'*endpoint* l'est (c'est
-  celui de l'estimation de contexte), mais pas la structure de son JSON :
-  `parseConversation()` accepte les deux conventions plausibles (`chat_messages`/`messages`,
-  `sender`/`role`, `text`/`content[]`) plutôt que d'en parier une seule, et le dit en console
-  si aucune ne correspond. C'est le premier endroit à corriger si l'export échoue alors que le
-  bouton s'affiche.
-- **Le PDF dépend d'une iframe `srcdoc`, qui hérite de la CSP de claude.ai.** Aucun script n'y
-  est injecté (`print()` est appelé de l'extérieur), mais si la politique du site interdisait
-  un jour les styles en ligne, le PDF sortirait sans mise en forme — le texte, lui, resterait
-  complet. L'export Markdown, qui ne dépend d'aucune CSP, reste la sortie la plus sûre.
-- **Le rendu markdown → HTML du PDF est partiel** : ni tableaux, ni notes de bas de page, ni
-  HTML brut inline. Ce qui n'est pas reconnu ressort en paragraphe — jamais perdu, mais pas
-  mis en forme. Le fichier `.md`, lui, est le contenu exact.
-- **Les noms de tokens du design system ne sont pas garantis stables.** Si un jour l'accent ne
-  change plus, c'est `--cds-clay-emphasized` / `--cds-clay` qu'il faut re-confirmer en
-  inspectant le bouton d'envoi ; il n'y a que `theme.js` à corriger. Pour les trois autres
-  réglages, le `console.warn` nomme directement la variable en cause.
+- **Web/Service Workers = blind spot.** A content script does not run in workers;
+  any `fetch` emitted from a worker by claude.ai would be invisible. No workaround.
+- **The `postMessage` channel is not private.** The page can read these messages, and so can any other
+  extension with a MAIN content script on claude.ai.
+- **claude.ai's internal endpoints are not stable.** If the usage format changes, only
+  `usage-source.js` needs fixing (and `test-usage-source.js` updating). For
+  context estimation, it is the URL regexes at the top of `inject.js`. The Statuspage API,
+  for its part, is a documented public API: it is the most stable of the three.
+- **The status is 5 min old at worst.** The start of an incident therefore does not appear
+  instantly; the link to status.claude.com is there for that.
+- **`ORGS_PATH` is not verified yet** — see the dedicated section at the top.
+- **`severity` → `over_limit` is an extrapolation.** Only `"warning"` and `"normal"` have
+  been observed; to be fixed in `statusFromSeverity()` if claude.ai uses another word
+  to report a limit being reached.
+- **A multi-organization account takes the first one** returned by the API, which is not
+  necessarily the active one. To be refined in `pickOrgId()` if the case comes up.
+- Polling runs at **1/minute**, the floor of `chrome.alarms`: consumption made in
+  a few seconds only appears at the next poll. The popup shows the age of the value.
+- **The theme only applies to tabs that have a content script**: a claude.ai tab
+  opened before the extension was installed or reloaded only reacts once
+  reloaded. Same limit as the usage polling fallback relay.
+- **At `document_start` the original values are not readable yet**: only the accent
+  color applies immediately. Weight, corners/shadows and font arrive a few hundred
+  milliseconds later, when the site's sheets are parsed.
+- **Auto-continue rests on what claude.ai *displays*, not on an API.** Three points of
+  breakage, all in `autocontinue.js`: spotting the assistant's messages — the
+  `.group/message-row` container (a **virtualized** list: a one-off scan only sees what is mounted),
+  filtered to the assistant role by the presence of `[data-testid="action-bar-retry"]` or
+  `[data-testid="action-bar-read-aloud"]` in its action bar (`action-bar-edit` marks on the
+  contrary a user message; `action-bar-copy` exists on both roles and is
+  **never** used as a criterion) — recognizing the button by its label (`Continue`,
+  which covers `Continuer` along the way) — and reading the text itself, which must ignore any
+  copy hidden for accessibility (`[aria-hidden="true"]`, `.sr-only`, `visually-hidden`…),
+  without which the same passage ends up doubled. A markup rework breaks them silently —
+  detection will simply stop firing.
+- **The "last message" anchors to the *Continue* button, not to DOM order.**
+  `querySelectorAll('.group/message-row')` returns its results in document order, which does not
+  necessarily match the visual order of the conversation: an assistant-like element
+  elsewhere on the page (citation card, preview…) placed *after* the real last message in the
+  DOM would otherwise usurp the "last" position. `acLastAssistantRow()` therefore finds the row that
+  really contains the visible button through `.closest()`, and only falls back to the last element
+  of the array if the button is nested in no known row — a fallback not verified on the
+  real markup, reported as such in the diagnostic journal (`last message read`).
+- **The six limit phrases are only known in English.** On a French claude.ai interface,
+  condition (2) will fail: no French variant has been captured, and this repo
+  does not hard-code a guessed value. To be collected on a real message, then added to
+  `AC_LIMIT_PHRASES` with a test in `test-autocontinue.js`.
+- **`document.execCommand('insertText')` is deliberately absent.** The reference
+  [claude-autocontinue](https://github.com/timothy22000/claude-autocontinue) uses it to
+  *write* into the editor (its "minimize tokens" mode): it is the only reliable method to
+  trigger the React/ProseMirror synthetic events of claude.ai's input — a
+  `value = …` followed by a `dispatchEvent` is not enough, React sees nothing. It is also a
+  **deprecated** API, which would break if Anthropic changed the editor's implementation, just like
+  the other pitfalls recorded here. This extension therefore types **nothing**: it limits
+  itself to clicking the button, which does not depend on the editor. If a "continuation
+  prompt" mode is ever added, it will have to go through `execCommand` and inherit that
+  fragility.
+- **A tab opened before installation has no auto-continue**: neither a `MutationObserver`, nor an
+  `acTick()` to wake by `executeScript`. Same limit as the usage polling fallback relay and
+  as the theme — reload the tab.
+- **The 5 s loop keeps the service worker awake** as long as a claude.ai tab is
+  open *and* auto-continue is active, not paused and under its maximum. That is the price
+  of a cadence below `chrome.alarms`'s one-minute floor; disabled, nothing is
+  kept alive.
+- **The counter can undercount with several tabs.** `autoContinueCount` is incremented
+  by a read-modify-write on the page side: two tabs continuing at the same millisecond
+  can lose one unit. Without consequence on the limit itself, which stays evaluated at
+  each tick.
+- **The folders move nodes that React manages.** That is the accepted risk of the
+  feature: if the site removes an item (deleted conversation) while it is
+  in one of our blocks, its `removeChild` acts on a node that is no longer at home and can
+  throw. Nothing warns of it from an extension — it is the price of the "move rather than
+  duplicate" choice, which is what preserves the native clicks and context menus. In case of a broken
+  sidebar, emptying `folders` and `folderAssignments` puts everything back in order.
+- **A slight flicker when changing conversation is normal**: the site re-renders its
+  list, briefly puts the filed items back into "Récents", and the `MutationObserver`
+  moves them again 120 ms later.
+- **A folder's counter can exceed the visible number**: it counts the *assigned*
+  conversations, some of which are not loaded into the DOM yet (pagination on scroll).
+- **claude.ai's drag implementation has not been identified** (HTML5 or pointer).
+  Both paths are covered and mutually exclusive, but if one day a conversation ended up
+  **both** filed in a folder *and* natively pinned, it would be the sign
+  that the two systems fire together. The remedy would then be to add, after our
+  drop, an explicit removal from the pinning zone — and not to widen the interception, which
+  would break the native drag elsewhere. Nothing of the sort has been observed.
+- **The shape of the conversation response has never been captured.** The *endpoint* has been (it is
+  the context estimation one), but not the structure of its JSON:
+  `parseConversation()` accepts both plausible conventions (`chat_messages`/`messages`,
+  `sender`/`role`, `text`/`content[]`) rather than betting on a single one, and says so in the console
+  if none matches. It is the first place to fix if the export fails while the
+  button is displayed.
+- **The PDF depends on a `srcdoc` iframe, which inherits claude.ai's CSP.** No script is
+  injected into it (`print()` is called from outside), but if the site's policy one day forbade
+  inline styles, the PDF would come out unformatted — the text, for its part, would stay
+  complete. The Markdown export, which depends on no CSP, stays the safest output.
+- **The PDF's markdown → HTML rendering is partial**: no tables, no footnotes, no
+  raw inline HTML. What is not recognized comes out as a paragraph — never lost, but not
+  formatted. The `.md` file, for its part, is the exact content.
+- **The design system's token names are not guaranteed stable.** If one day the accent no longer
+  changes, it is `--cds-clay-emphasized` / `--cds-clay` that must be re-confirmed by
+  inspecting the send button; only `theme.js` needs fixing. For the three other
+  settings, the `console.warn` directly names the variable at fault.

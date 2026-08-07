@@ -1,5 +1,5 @@
-// Test unitaire de status-source.js. Aucune dependance, aucun framework, comme
-// test-usage-source.js. Lance avec : node test-status-source.js
+// Unit test for status-source.js. No dependency, no framework, like
+// test-usage-source.js. Run with: node test-status-source.js
 'use strict';
 
 var assert = require('assert');
@@ -7,9 +7,9 @@ var fs = require('fs');
 var path = require('path');
 var vm = require('vm');
 
-// status-source.js est charge par importScripts() dans l'extension, pas par require() : pas de
-// module.exports a y ajouter. On l'evalue donc dans son propre contexte, comme le ferait le
-// service worker, et on relit ses "var" de premier niveau sur ce contexte.
+// status-source.js is loaded by importScripts() in the extension, not by require(): no
+// module.exports to add to it. So we evaluate it in its own context, as the
+// service worker would, and read back its top-level "var" on that context.
 var src = fs.readFileSync(path.join(__dirname, 'status-source.js'), 'utf8');
 var sandbox = {};
 vm.createContext(sandbox);
@@ -18,9 +18,9 @@ vm.runInContext(src, sandbox);
 var tests = [];
 function test(name, fn) { tests.push({ name: name, fn: fn }); }
 
-// ---- reponse reelle, capturee le 2026-07-30 sur GET /api/v2/summary.json -------------------
-// Un incident etait actif ce jour-la : c'est une vraie fixture de degradation, pas une
-// fabrication. Elaguee des champs qu'on ne lit pas (page, created_at/updated_at, position,
+// ---- real response, captured on 2026-07-30 from GET /api/v2/summary.json -------------------
+// An incident was active that day: this is a genuine degradation fixture, not a
+// fabrication. Pruned of the fields we do not read (page, created_at/updated_at, position,
 // incident_updates, reminder_intervals...).
 var REAL_RESPONSE = {
   status: { indicator: 'minor', description: 'Minor Service Outage' },
@@ -40,33 +40,33 @@ var REAL_RESPONSE = {
   scheduled_maintenances: []
 };
 
-test('reponse reelle : niveau global "outage", pas le "minor" de l\'indicateur', function () {
+test('real response: overall level "outage", not the indicator\'s "minor"', function () {
   assert.strictEqual(sandbox.parseStatus(REAL_RESPONSE).level, 'outage');
 });
 
-test('reponse reelle : 6 composants retenus, 4 en panne', function () {
+test('real response: 6 components retained, 4 down', function () {
   var out = sandbox.parseStatus(REAL_RESPONSE);
   assert.strictEqual(out.components.length, 6);
 
   var down = out.components.filter(function (c) { return c.level === 'outage'; });
   assert.strictEqual(down.length, 4);
   assert.strictEqual(down[0].name, 'claude.ai');
-  assert.strictEqual(down[0].status, 'partial_outage');   // valeur brute conservee
+  assert.strictEqual(down[0].status, 'partial_outage');   // raw value preserved
 
-  // join() plutot que deepStrictEqual : les tableaux naissent dans le contexte vm, leur
-  // Array.prototype n'est pas celui de ce realm et la comparaison stricte echouerait dessus.
+  // join() rather than deepStrictEqual: the arrays are born in the vm context, their
+  // Array.prototype is not this realm's and the strict comparison would fail on it.
   var ok = out.components.filter(function (c) { return c.level === 'operational'; })
     .map(function (c) { return c.name; }).join(' | ');
   assert.strictEqual(ok, 'Claude Console (platform.claude.com) | Claude for Government');
 });
 
-test('reponse reelle : titre et impact de l\'incident en cours', function () {
+test('real response: title and impact of the ongoing incident', function () {
   var out = sandbox.parseStatus(REAL_RESPONSE);
   assert.strictEqual(out.incident.name, 'Elevated errors across many models');
   assert.strictEqual(out.incident.impact, 'major');
 });
 
-test('tout nominal : level operational, incident absent (pas null)', function () {
+test('all nominal: level operational, incident absent (not null)', function () {
   var out = sandbox.parseStatus({
     status: { indicator: 'none', description: 'All Systems Operational' },
     components: [
@@ -80,20 +80,20 @@ test('tout nominal : level operational, incident absent (pas null)', function ()
   assert.strictEqual(out.components.length, 2);
 });
 
-test('composant etranger et entree de groupe ecartes, sans peser sur le niveau', function () {
+test('foreign component and group entry discarded, without weighing on the level', function () {
   var out = sandbox.parseStatus({
     status: { indicator: 'none' },
     components: [
       { name: 'claude.ai', status: 'operational', group: false },
       { name: 'Some Other Vendor', status: 'major_outage', group: false },
-      { name: 'Claude Services', status: 'major_outage', group: true }   // groupe, pas un etat
+      { name: 'Claude Services', status: 'major_outage', group: true }   // a group, not a state
     ]
   });
   assert.strictEqual(out.components.length, 1);
-  assert.strictEqual(out.level, 'operational');   // le major_outage etranger ne compte pas
+  assert.strictEqual(out.level, 'operational');   // the foreign major_outage does not count
 });
 
-test('degraded_performance donne "degraded", pas "outage"', function () {
+test('degraded_performance yields "degraded", not "outage"', function () {
   var out = sandbox.parseStatus({
     status: { indicator: 'none' },
     components: [{ name: 'Claude Code', status: 'degraded_performance', group: false }]
@@ -102,25 +102,25 @@ test('degraded_performance donne "degraded", pas "outage"', function () {
   assert.strictEqual(out.components[0].level, 'degraded');
 });
 
-test('un incident deja resolu n\'est pas remonte', function () {
+test('an already resolved incident is not reported', function () {
   var out = sandbox.parseStatus({
     status: { indicator: 'none' },
     components: [{ name: 'claude.ai', status: 'operational', group: false }],
-    incidents: [{ name: 'Vieil incident', impact: 'minor', resolved_at: '2026-07-29T10:00:00Z' }]
+    incidents: [{ name: 'Old incident', impact: 'minor', resolved_at: '2026-07-29T10:00:00Z' }]
   });
   assert.strictEqual(out.incident, undefined);
 });
 
-test('statut de composant inconnu : garde en "degraded", brut conserve', function () {
+test('unknown component status: kept as "degraded", raw preserved', function () {
   var out = sandbox.parseStatus({
     components: [{ name: 'Claude Code', status: 'exploded', group: false }]
   });
-  assert.strictEqual(out.level, 'degraded');            // pas d'indicateur : les composants seuls
+  assert.strictEqual(out.level, 'degraded');            // no indicator: the components alone
   assert.strictEqual(out.components[0].level, 'degraded');
   assert.strictEqual(out.components[0].status, 'exploded');
 });
 
-test('format totalement inconnu : null, pas d\'exception', function () {
+test('completely unknown format: null, not an exception', function () {
   assert.strictEqual(sandbox.parseStatus(null), null);
   assert.strictEqual(sandbox.parseStatus('oops'), null);
   assert.strictEqual(sandbox.parseStatus({}), null);
@@ -128,13 +128,13 @@ test('format totalement inconnu : null, pas d\'exception', function () {
   assert.strictEqual(sandbox.parseStatus({ status: { indicator: 42 } }), null);
 });
 
-test('indicateur seul, sans composants : niveau quand meme derive', function () {
+test('indicator alone, without components: level derived anyway', function () {
   var out = sandbox.parseStatus({ status: { indicator: 'critical' }, components: [] });
   assert.strictEqual(out.level, 'outage');
   assert.strictEqual(out.components.length, 0);
 });
 
-// ---- execution ----------------------------------------------------------------------------
+// ---- run -----------------------------------------------------------------------------------
 var failed = 0;
 tests.forEach(function (t) {
   try {
@@ -147,5 +147,5 @@ tests.forEach(function (t) {
   }
 });
 
-console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passes');
+console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passed');
 if (failed) process.exit(1);

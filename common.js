@@ -1,10 +1,10 @@
-// Partage entre le service worker (importScripts) et le popup (<script>). Les seuils de
-// couleur doivent rester identiques des deux cotes : la barre du popup et l'anneau de
-// l'icone representent la meme fenetre, une divergence serait un bug visible. Idem pour le
-// formatage de l'heure de reset, affichee a la fois dans le popup et dans les notifications.
+// Shared between the service worker (importScripts) and the popup (<script>). The color
+// thresholds must stay identical on both sides: the popup bar and the icon ring
+// represent the same window, a divergence would be a visible bug. Same for the
+// formatting of the reset time, displayed both in the popup and in the notifications.
 //
-// Le format des reponses de claude.ai n'est pas garanti stable : une fenetre absente ou une
-// utilization non numerique doit donner du gris, jamais une exception.
+// The format of claude.ai responses is not guaranteed stable: a missing window or a
+// non-numeric utilization must yield grey, never an exception.
 'use strict';
 
 var USAGE_LABELS = { '5h': 'Session — 5 h', '7d': 'Semaine — 7 j' };
@@ -31,9 +31,9 @@ function colorFor(w) {
   return USAGE_RED;
 }
 
-// ---- heure de reset ---------------------------------------------------------
+// ---- reset time -------------------------------------------------------------
 
-// "dans 3 h 12"
+// Sample output: "dans 3 h 12"
 function untilText(ms) {
   if (ms <= 0) return '';
   var min = Math.round(ms / 60000);
@@ -44,8 +44,8 @@ function untilText(ms) {
   return ' (dans ' + Math.round(h / 24) + ' j)';
 }
 
-// windows.*.resets_at est toujours en SECONDES Unix : la reponse d'usage arrive en ISO 8601,
-// mais toEpochSeconds() (usage-source.js) fait la conversion avant l'ecriture en storage.
+// windows.*.resets_at is always in Unix SECONDS: the usage response arrives as ISO 8601,
+// but toEpochSeconds() (usage-source.js) does the conversion before writing to storage.
 function resetText(sec, withDay) {
   if (typeof sec !== 'number' || !isFinite(sec)) return '';
   var d = new Date(sec * 1000);

@@ -1,13 +1,13 @@
-// Seul point d'adaptation a l'API d'usage de claude.ai. Le reste de l'extension ne depend
-// que de la SORTIE de ce fichier (un objet a la forme historique de "message_limit" du flux
-// SSE : { windows: { '5h', '7d' }, ... }, utilization en FRACTION 0-1), jamais de la forme
-// reelle de la reponse : si claude.ai change de format, il n'y a que ce fichier a corriger.
+// The only adaptation point to claude.ai's usage API. The rest of the extension only depends
+// on the OUTPUT of this file (an object in the historical shape of "message_limit" from the
+// SSE stream: { windows: { '5h', '7d' }, ... }, utilization as a 0-1 FRACTION), never on the
+// actual shape of the response: if claude.ai changes format, only this file needs fixing.
 //
-// Charge par importScripts() depuis le service worker.
+// Loaded by importScripts() from the service worker.
 'use strict';
 
-// GET /api/organizations/<org>/usage, CONFIRME par capture reseau le 2026-07-29. Exemple de
-// reponse reelle :
+// GET /api/organizations/<org>/usage, CONFIRMED by network capture on 2026-07-29. Sample of a
+// real response:
 //   {
 //     "five_hour": { "utilization": 76, "resets_at": "2026-07-29T10:49:59.074167+00:00" },
 //     "seven_day": { "utilization": 43, "resets_at": "2026-08-01T10:59:59.074190+00:00" },
@@ -21,14 +21,14 @@
 //     "extra_usage": { "is_enabled": false, "utilization": 0, ... },
 //     "spend": { "percent": 0, "enabled": false, ... }
 //   }
-// "utilization" et "percent" sont des ENTIERS 0-100, pas des fractions 0-1 comme l'etait
-// l'ancien "windows.utilization" du flux SSE — parseUsage() divise par 100 une seule fois.
+// "utilization" and "percent" are 0-100 INTEGERS, not 0-1 fractions as the old
+// "windows.utilization" of the SSE stream was — parseUsage() divides by 100 exactly once.
 var USAGE_PATH = '/api/organizations/{org}/usage';
 
-// A COMPLETER — n'a jamais ete capture (seul USAGE_PATH l'a ete). Suppose, par analogie avec
-// USAGE_PATH, une liste d'organisations sous ce chemin. Si le sondage echoue des la
-// resolution de l'org (avant meme d'atteindre USAGE_PATH), c'est ce chemin qu'il faut
-// verifier en premier dans l'onglet Network.
+// TO BE COMPLETED — has never been captured (only USAGE_PATH has been). Assumed, by analogy with
+// USAGE_PATH, to be a list of organizations under this path. If polling fails as early as the
+// org resolution (before even reaching USAGE_PATH), this is the path to check
+// first in the Network tab.
 var ORGS_PATH = '/api/organizations';
 
 var CLAUDE_ORIGIN = 'https://claude.ai';
@@ -45,8 +45,8 @@ function orgsUrl() {
   return CLAUDE_ORIGIN + ORGS_PATH;
 }
 
-// Premier uuid d'organisation trouve. Un compte multi-organisations prendrait la premiere,
-// qui n'est pas forcement l'active — a affiner seulement si le cas se presente.
+// First organization uuid found. A multi-organization account would take the first one,
+// which is not necessarily the active one — to be refined only if the case comes up.
 function pickOrgId(json) {
   var list = Array.isArray(json) ? json
            : (json && Array.isArray(json.organizations)) ? json.organizations
@@ -60,14 +60,14 @@ function pickOrgId(json) {
   return null;
 }
 
-// ---- normalisation -----------------------------------------------------------
+// ---- normalization -----------------------------------------------------------
 
-// common.js attend des SECONDES Unix. resets_at arrive en ISO 8601 (avec microsecondes,
-// Date.parse les tronque sans erreur) ; les millisecondes sont gerees par prudence, au cas
-// ou une reponse future les renverrait telles quelles.
+// common.js expects Unix SECONDS. resets_at arrives as ISO 8601 (with microseconds,
+// Date.parse truncates them without error); milliseconds are handled out of caution, in case
+// a future response returned them as-is.
 function toEpochSeconds(v) {
   if (typeof v === 'number' && isFinite(v)) {
-    return v > 1e11 ? Math.round(v / 1000) : v;   // > an 5138 en secondes => c'est des ms
+    return v > 1e11 ? Math.round(v / 1000) : v;   // > year 5138 in seconds => these are ms
   }
   if (typeof v === 'string') {
     var ms = Date.parse(v);
@@ -76,12 +76,12 @@ function toEpochSeconds(v) {
   return null;
 }
 
-// "warning"/"normal" sont les deux seules valeurs observees dans nos captures (percent 76 et
-// 43, aucune limite atteinte). "over_limit" n'a donc JAMAIS ete vu cote severity : ce mapping
-// est extrapole par analogie avec l'ancien "status" du flux SSE, a corriger si claude.ai
-// utilise un autre mot pour une limite depassee. Une severite inconnue ou "normal" ne fixe
-// pas de status : colorFor() derive alors la couleur du pourcentage seul, ce qui reste correct
-// pour le cas nominal.
+// "warning"/"normal" are the only two values observed in our captures (percent 76 and
+// 43, no limit reached). "over_limit" has therefore NEVER been seen on the severity side: this mapping
+// is extrapolated by analogy with the old "status" of the SSE stream, to be corrected if claude.ai
+// uses another word for an exceeded limit. An unknown severity or "normal" does not set
+// a status: colorFor() then derives the color from the percentage alone, which stays correct
+// for the nominal case.
 function statusFromSeverity(sev) {
   if (sev === 'warning') return 'approaching_limit';
   if (sev === 'critical' || sev === 'error' || sev === 'exceeded') return 'over_limit';
@@ -100,8 +100,8 @@ function windowFromLimit(entry) {
   return w;
 }
 
-// Repli quand "limits" manque, est vide, ou ne porte pas l'entree cherchee : five_hour /
-// seven_day n'ont pas de "severity", seulement utilization + resets_at.
+// Fallback when "limits" is missing, empty, or does not carry the sought entry: five_hour /
+// seven_day have no "severity", only utilization + resets_at.
 function windowFromRoot(root) {
   if (!root || typeof root.utilization !== 'number' || !isFinite(root.utilization)) return null;
 
@@ -119,13 +119,13 @@ function pickLimit(limits, kind) {
   return null;
 }
 
-// Transforme la reponse brute en objet a la forme historique de "message_limit" :
+// Turns the raw response into an object in the historical shape of "message_limit":
 //   { windows: { '5h': {utilization, status?, resets_at?}, '7d': {...} } }
 //
-// "limits[]" est prioritaire car il porte deja severity/is_active en plus du pourcentage ;
-// kind:"session" -> '5h', kind:"weekly_all" -> '7d'. "weekly_scoped" (usage par modele) est
-// ignore : ce n'est pas la limite globale qu'on affiche. En repli — limits absent, vide, ou
-// sans l'entree cherchee — on retombe sur five_hour / seven_day a la racine.
+// "limits[]" takes priority because it already carries severity/is_active on top of the percentage;
+// kind:"session" -> '5h', kind:"weekly_all" -> '7d'. "weekly_scoped" (per-model usage) is
+// ignored: it is not the overall limit we display. As a fallback — limits missing, empty, or
+// without the sought entry — we fall back to five_hour / seven_day at the root.
 function parseUsage(json) {
   if (!json || typeof json !== 'object') return null;
 
@@ -134,8 +134,8 @@ function parseUsage(json) {
   var w7 = windowFromLimit(pickLimit(limits, 'weekly_all')) || windowFromRoot(json.seven_day);
 
   if (!w5 && !w7) {
-    console.warn('[usage] format de reponse inconnu : adapter parseUsage() dans ' +
-                 'usage-source.js. JSON recu :', json);
+    console.warn('[usage] unknown response format: adapt parseUsage() in ' +
+                 'usage-source.js. JSON received:', json);
     return null;
   }
 
@@ -143,9 +143,9 @@ function parseUsage(json) {
   if (w5) out.windows['5h'] = w5;
   if (w7) out.windows['7d'] = w7;
 
-  // extra_usage / spend portent les credits payants (equivalent de l'ancien overageInUse du
-  // flux SSE, jamais observe non plus). Pas dans le perimetre de ce correctif : a cabler dans
-  // evaluate() de background.js si ce point redevient utile.
+  // extra_usage / spend carry the paid credits (equivalent of the old overageInUse of the
+  // SSE stream, never observed either). Not in the scope of this fix: to be wired into
+  // evaluate() in background.js if this point becomes useful again.
 
   return out;
 }

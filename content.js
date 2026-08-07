@@ -1,10 +1,10 @@
-// Monde isole, document_start. Relais de secours pour le sondage d'usage : quand le fetch
-// emis depuis le service worker est refuse (401/403 — il ne porte pas d'origine claude.ai),
-// le worker demande a cet onglet de refaire l'appel. Ici on est sur la page claude.ai, donc
-// le fetch est same-origin : cookies, Origin et Referer sont ceux que l'API attend.
+// Isolated world, document_start. Fallback relay for usage polling: when the fetch
+// issued from the service worker is rejected (401/403 — it carries no claude.ai origin),
+// the worker asks this tab to redo the call. Here we are on the claude.ai page, so
+// the fetch is same-origin: cookies, Origin and Referer are the ones the API expects.
 //
-// Ce fichier ne touche plus a chrome.storage : la cle "usage" n'a qu'un seul auteur, le
-// service worker. L'estimation de contexte est geree separement par context-estimator.js.
+// This file no longer touches chrome.storage: the "usage" key has a single author, the
+// service worker. Context estimation is handled separately by context-estimator.js.
 (function () {
   'use strict';
 
@@ -16,8 +16,8 @@
       headers: { accept: 'application/json' }
     }).then(function (res) {
       if (!res.ok) {
-        // Le statut remonte au worker : c'est lui qui decide d'invalider l'uuid
-        // d'organisation en cache plutot que de resonder dans le vide.
+        // The status goes back to the worker: it is the one that decides to invalidate the
+        // cached organization uuid rather than keep polling into the void.
         sendResponse({ ok: false, error: 'HTTP ' + res.status, status: res.status });
         return;
       }
@@ -28,6 +28,6 @@
       sendResponse({ ok: false, error: String((e && e.message) || e) });
     });
 
-    return true;   // reponse asynchrone : garde le canal ouvert
+    return true;   // asynchronous response: keeps the channel open
   });
 })();

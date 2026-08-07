@@ -1,26 +1,26 @@
-// Test de theme.js dans un DOM bouchonne. Lance avec :
-//   npm install jsdom      (une seule fois, hors depot)
+// Test for theme.js in a stubbed DOM. Run with:
+//   npm install jsdom      (once only, outside the repo)
 //   node test-theme-dom.js
 //
-// Meme regle que test-folders-dom.js et test-export-dom.js : si jsdom est absent, ce fichier
-// SE SAUTE au lieu d'echouer. Le depot n'a volontairement ni package.json ni node_modules.
+// Same rule as test-folders-dom.js and test-export-dom.js: if jsdom is missing, this file
+// SKIPS ITSELF instead of failing. The repo deliberately has neither package.json nor node_modules.
 //
-// test-theme.js couvre les calculs purs (conversion de couleur, poids, ombres) ; ici on couvre
-// ce qu'ils ne peuvent pas voir : ce que theme.js ECRIT reellement dans un document donne.
+// test-theme.js covers the pure computations (color conversion, weights, shadows); here we cover
+// what they cannot see: what theme.js actually WRITES into a given document.
 //
-// Raison d'etre principale : le gros spinner « plein ecran » de claude.ai est rendu dans une
-// iframe sur https://a.claude.ai/, ou theme.js est desormais injecte (all_frames). Ce document
-// est REDUIT — il n'a pas forcement .cds-root sur <html>, ni les tokens --cds-*, ni meme un
-// <body> au moment ou le script demarre. Ces tests verrouillent les deux moities du contrat :
-// l'accent est surcharge meme quand rien n'est lisible (c'est ce qui repeint le spinner), et
-// les trois reglages derives se desactivent proprement au lieu de planter.
+// Main reason for existing: claude.ai's large "fullscreen" spinner is rendered in an
+// iframe on https://a.claude.ai/, where theme.js is now injected (all_frames). That document
+// is REDUCED — it does not necessarily have .cds-root on <html>, nor the --cds-* tokens, nor even a
+// <body> at the moment the script starts. These tests lock down both halves of the contract:
+// the accent is overridden even when nothing is readable (that is what repaints the spinner), and
+// the three derived settings disable themselves cleanly instead of crashing.
 'use strict';
 
 var JSDOM;
 try {
   JSDOM = require('jsdom').JSDOM;
 } catch (e) {
-  console.log('  -- jsdom absent : test du DOM saute (npm install jsdom pour l\'activer)');
+  console.log('  -- jsdom missing: DOM test skipped (npm install jsdom to enable it)');
   process.exit(0);
 }
 
@@ -31,15 +31,15 @@ var vm = require('vm');
 
 var STYLE_ID = '__claude_theme_v1__';
 
-// Les tokens tels que claude.ai les pose. Un document qui les porte doit voir les reglages
-// derives s'appliquer ; un document qui ne les porte pas doit les voir se desactiver.
+// The tokens as claude.ai sets them. A document that carries them must see the derived
+// settings apply; a document that does not carry them must see them disable themselves.
 var TOKENS = ':root{--cds-radius:8px;--cds-shadow-sm:0 1px 2px rgba(0,0,0,.4);' +
   '--cds-shadow-md:0 2px 6px rgba(0,0,0,.4);--cds-shadow-lg:0 4px 12px rgba(0,0,0,.4);' +
   '--cds-font-weight-regular:400;--cds-font-weight-medium:500;' +
   '--cds-font-weight-semibold:600;--cds-font-weight-bold:700}';
 
-// runScripts:'outside-only' + getInternalVMContext : meme procede que test-export-dom.js.
-// theme.js n'est pas dans une IIFE, ses fonctions restent donc lisibles sur le contexte.
+// runScripts:'outside-only' + getInternalVMContext: same technique as test-export-dom.js.
+// theme.js is not in an IIFE, so its functions stay readable on the context.
 function boot(headCss, stored, opts) {
   var o = opts || {};
   var dom = new JSDOM(
@@ -61,8 +61,8 @@ function boot(headCss, stored, opts) {
     }
   };
 
-  // Simule document_start dans un document encore sans corps : themeCaptureOriginals() doit
-  // rendre null sans memoiser, et surtout ne pas lever.
+  // Simulates document_start in a document still without a body: themeCaptureOriginals() must
+  // return null without memoizing, and above all must not throw.
   if (o.stripBody) win.document.documentElement.removeChild(win.document.body);
 
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'theme.js'), 'utf8'),
@@ -84,78 +84,78 @@ function boot(headCss, stored, opts) {
 var tests = [];
 function test(name, fn) { tests.push({ name: name, fn: fn }); }
 
-// ---- le cas qui motive l'injection dans l'iframe -------------------------------------------
+// ---- the case that motivates injection into the iframe -------------------------------------
 
-// C'EST le test du bug du spinner : dans un document qui ne porte aucun token du design
-// system, l'accent doit quand meme etre ecrit. Il ne depend d'aucune valeur d'origine — c'est
-// ce qui lui permet de repeindre un element rendu dans un document reduit.
+// THIS is the spinner bug's test: in a document that carries no design system
+// token, the accent must still be written. It depends on no original value — that is
+// what lets it repaint an element rendered in a reduced document.
 test('document sans aucun token : l\'accent est surchargé quand même', function () {
   var w = boot('', { accentColor: '#3f6ac6' });
   return w.settle().then(function () {
     var css = w.css();
-    assert.ok(css, 'aucune feuille injectée');
+    assert.ok(css, 'no sheet injected');
     assert.ok(css.indexOf('--cds-clay-emphasized:#3f6ac6 !important') !== -1, css);
-    assert.ok(css.indexOf('--cds-clay:') !== -1, 'la variante éclaircie manque : ' + css);
+    assert.ok(css.indexOf('--cds-clay:') !== -1, 'the lightened variant is missing: ' + css);
     assert.strictEqual(w.warns.length, 0, w.warns.join(' | '));
   });
 });
 
-// Dans l'iframe, .cds-root peut ne pas exister : c'est :root qui porte la surcharge. Si ce
-// selecteur disparaissait de la regle, le spinner cesserait d'etre repeint.
-test('la règle vise :root, pas seulement .cds-root', function () {
+// In the iframe, .cds-root may not exist: it is :root that carries the override. If that
+// selector disappeared from the rule, the spinner would stop being repainted.
+test('the rule targets :root, not only .cds-root', function () {
   var w = boot('', { accentColor: '#3f6ac6' });
   return w.settle().then(function () {
     assert.ok(w.css().indexOf(':root,html.cds-root,.cds-root{') === 0, w.css());
   });
 });
 
-test('document sans <body> (document_start) : aucune exception, l\'accent passe', function () {
+test('document without <body> (document_start): no exception, the accent gets through', function () {
   var w = boot('', { accentColor: '#3f6ac6' }, { stripBody: true });
   return w.settle().then(function () {
     assert.ok(w.css().indexOf('--cds-clay-emphasized:#3f6ac6') !== -1, w.css());
   });
 });
 
-// ---- desactivation propre des reglages derives ---------------------------------------------
+// ---- clean disabling of the derived settings -----------------------------------------------
 
-// Les trois autres reglages derivent de valeurs d'origine : sans elles, ils ne doivent RIEN
-// ecrire — surtout pas une valeur devinee — et ne pas empecher l'accent de passer.
-test('document sans tokens : les réglages dérivés n\'écrivent rien, sans planter', function () {
+// The three other settings derive from original values: without them, they must write
+// NOTHING — least of all a guessed value — and must not prevent the accent from getting through.
+test('document without tokens: the derived settings write nothing, without crashing', function () {
   var w = boot('', {
     accentColor: '#3f6ac6', radiusPreset: 'round', fontWeightPreset: 'bold', fontFamily: 'serif'
   });
   return w.settle().then(function () {
     var css = w.css();
-    assert.ok(css.indexOf('--cds-clay-emphasized') !== -1, 'l\'accent doit passer : ' + css);
-    assert.strictEqual(css.indexOf('--cds-radius'), -1, 'rayon écrit sans valeur d\'origine');
-    assert.strictEqual(css.indexOf('--cds-font-weight'), -1, 'poids écrit sans valeur d\'origine');
-    assert.strictEqual(css.indexOf('--cds-shadow'), -1, 'ombre écrite sans valeur d\'origine');
+    assert.ok(css.indexOf('--cds-clay-emphasized') !== -1, 'the accent must get through: ' + css);
+    assert.strictEqual(css.indexOf('--cds-radius'), -1, 'radius written without an original value');
+    assert.strictEqual(css.indexOf('--cds-font-weight'), -1, 'weight written without an original value');
+    assert.strictEqual(css.indexOf('--cds-shadow'), -1, 'shadow written without an original value');
   });
 });
 
-test('aucun réglage : aucune feuille injectée (le document reste intact)', function () {
+test('no setting: no sheet injected (the document stays intact)', function () {
   var w = boot(TOKENS, {});
   return w.settle().then(function () {
-    assert.strictEqual(w.css(), null, 'une feuille a été posée alors que rien n\'est configuré');
+    assert.strictEqual(w.css(), null, 'a sheet was placed although nothing is configured');
   });
 });
 
-// ---- document qui porte bien les tokens ----------------------------------------------------
+// ---- document that does carry the tokens ---------------------------------------------------
 
-// L'autre moitie du contrat : la ou les tokens existent, les reglages derives s'appliquent
-// pour de vrai. Sans ce test, un theme.js qui ne ferait plus jamais rien passerait les tests
-// de desactivation ci-dessus sans qu'on le voie.
-test('document avec les tokens : les réglages dérivés s\'appliquent', function () {
+// The other half of the contract: where the tokens exist, the derived settings apply
+// for real. Without this test, a theme.js that never did anything again would pass the
+// disabling tests above without our seeing it.
+test('document with the tokens: the derived settings apply', function () {
   var w = boot(TOKENS, { radiusPreset: 'round', fontWeightPreset: 'bold' });
   return w.settle().then(function () {
     var css = w.css();
-    assert.ok(css.indexOf('--cds-radius:12px !important') !== -1, css);   // 8px x1,5
+    assert.ok(css.indexOf('--cds-radius:12px !important') !== -1, css);   // 8px x1.5
     assert.ok(css.indexOf('--cds-font-weight-bold:800 !important') !== -1, css);   // 700 +100
-    assert.ok(css.indexOf('--cds-shadow-sm:') !== -1, 'ombres non accentuées : ' + css);
+    assert.ok(css.indexOf('--cds-shadow-sm:') !== -1, 'shadows not accentuated: ' + css);
   });
 });
 
-test('préréglage « carré » : rayon à 0 et ombres supprimées', function () {
+test('"Carré" preset: radius at 0 and shadows removed', function () {
   var w = boot(TOKENS, { radiusPreset: 'square' });
   return w.settle().then(function () {
     var css = w.css();
@@ -164,42 +164,42 @@ test('préréglage « carré » : rayon à 0 et ombres supprimées', function ()
   });
 });
 
-// ---- instrumentation du bug de propagation intermittente (TEMPORAIRE) ----------------------
-// Ces tests couvrent les POINTS DE MESURE eux-memes. Ce n'est pas du zele : un observateur muet
-// parce que casse se lirait exactement comme « hypothese infirmee », et c'est ce contresens-la
-// qui a deja coute un tour de diagnostic avec le log « etat lu » verrouille au premier
-// chargement. Un instrument qu'on n'a pas teste ne vaut pas mieux que pas d'instrument.
+// ---- instrumentation of the intermittent propagation bug (TEMPORARY) -----------------------
+// These tests cover the MEASUREMENT POINTS themselves. This is not overzealousness: an observer mute
+// because it is broken would read exactly like "hypothesis disproved", and it is that very misreading
+// that has already cost one diagnosis round with the "state read" log locked to the first
+// load. An instrument you have not tested is no better than no instrument.
 
-test('l\'observateur détecte le retrait de la balise par le site', function () {
+test('the observer detects the tag removal by the site', function () {
   var w = boot('', { accentColor: '#3f6ac6' });
   return w.settle().then(function () {
     var el = w.el();
-    assert.ok(el, 'balise absente avant le retrait');
-    el.parentNode.removeChild(el);            // ce que ferait un re-rendu du site
+    assert.ok(el, 'tag absent before the removal');
+    el.parentNode.removeChild(el);            // what a site re-render would do
     return w.settle(30);
   }).then(function () {
-    assert.ok(w.warns.some(function (m) { return m.indexOf('balise RETIREE du DOM') !== -1; }),
-      'le retrait n\'a PAS été détecté — un observateur muet se lit à tort comme « hypothèse ' +
-      'infirmée » : ' + w.warns.join(' | '));
+    assert.ok(w.warns.some(function (m) { return m.indexOf('tag REMOVED from the DOM') !== -1; }),
+      'the removal was NOT detected — a mute observer wrongly reads as "hypothesis ' +
+      'disproved": ' + w.warns.join(' | '));
   });
 });
 
-// Le retrait doit etre CONSTATE, pas repare, tant que THEME_REINJECT vaut false. Ce test fige
-// la porte : le jour ou on la promeut, il echoue et rappelle de le mettre a jour.
-test('THEME_REINJECT à false : le retrait est constaté, pas réparé', function () {
+// The removal must be OBSERVED, not repaired, as long as THEME_REINJECT is false. This test freezes
+// the gate: the day we promote it, it fails and reminds us to update it.
+test('THEME_REINJECT at false: the removal is observed, not repaired', function () {
   var w = boot('', { accentColor: '#3f6ac6' });
   return w.settle().then(function () {
-    assert.strictEqual(w.win.THEME_REINJECT, false, 'la porte de réinjection a été promue');
+    assert.strictEqual(w.win.THEME_REINJECT, false, 'the reinjection gate has been promoted');
     w.el().parentNode.removeChild(w.el());
     return w.settle(30);
   }).then(function () {
-    assert.strictEqual(w.el(), null, 'la balise a été réinjectée alors que la porte est fermée');
+    assert.strictEqual(w.el(), null, 'the tag was reinjected although the gate is closed');
   });
 });
 
-// Le contre-test de la promotion : avec la porte ouverte, la balise revient. Il prouve que
-// promouvoir THEME_REINJECT suffit vraiment, sans avoir a le decouvrir en production.
-test('THEME_REINJECT à true : la balise est reposée après un retrait', function () {
+// The counter-test of the promotion: with the gate open, the tag comes back. It proves that
+// promoting THEME_REINJECT really is enough, without having to discover it in production.
+test('THEME_REINJECT at true: the tag is put back after a removal', function () {
   var w = boot('', { accentColor: '#3f6ac6' });
   return w.settle().then(function () {
     w.win.THEME_REINJECT = true;
@@ -207,39 +207,39 @@ test('THEME_REINJECT à true : la balise est reposée après un retrait', functi
     return w.settle(30);
   }).then(function () {
     var el = w.el();
-    assert.ok(el, 'la balise n\'a pas été reposée');
+    assert.ok(el, 'the tag was not put back');
     assert.ok(el.textContent.indexOf('--cds-clay-emphasized:#3f6ac6') !== -1, el.textContent);
   });
 });
 
-// Le log dont la portee etait fausse : il doit nommer sa cause, sinon le voir en console ne
-// prouve rien sur l'origine de la lecture.
-test('chaque lecture de storage est tracée, avec sa cause', function () {
+// The log whose scope was wrong: it must name its cause, otherwise seeing it in the console
+// proves nothing about the origin of the read.
+test('every storage read is traced, with its cause', function () {
   var w = boot('', { accentColor: '#3f6ac6' });
   return w.settle().then(function () {
-    assert.ok(w.logs.some(function (m) { return m.indexOf('etat lu (chargement initial)') !== -1; }),
+    assert.ok(w.logs.some(function (m) { return m.indexOf('state read (initial load)') !== -1; }),
       w.logs.join(' | '));
   });
 });
 
-// L'audit doit rapporter la valeur CALCULEE, pas celle qu'on croit avoir ecrite : c'est elle qui
-// separe « balise retiree » de « regle plus specifique qui gagne ».
-test('l\'audit rapporte la concordance entre couleur demandée et calculée', function () {
+// The audit must report the COMPUTED value, not the one we think we wrote: it is the one that
+// separates "tag removed" from "more specific rule that wins".
+test('the audit reports the match between the requested and computed color', function () {
   var w = boot('', { accentColor: '#3f6ac6' });
   return w.settle().then(function () {
     var audit = w.logs.filter(function (m) { return m.indexOf('[theme] audit') === 0; });
-    assert.strictEqual(audit.length, 1, 'un audit par rendu attendu : ' + w.logs.join(' | '));
-    assert.ok(audit[0].indexOf('demande=#3f6ac6') !== -1, audit[0]);
-    assert.ok(audit[0].indexOf('calcule=#3f6ac6') !== -1, audit[0]);
-    assert.ok(audit[0].indexOf('concordant=OUI') !== -1, audit[0]);
-    assert.ok(audit[0].indexOf('attachee=oui') !== -1, audit[0]);
+    assert.strictEqual(audit.length, 1, 'one audit per render expected: ' + w.logs.join(' | '));
+    assert.ok(audit[0].indexOf('requested=#3f6ac6') !== -1, audit[0]);
+    assert.ok(audit[0].indexOf('computed=#3f6ac6') !== -1, audit[0]);
+    assert.ok(audit[0].indexOf('matches=YES') !== -1, audit[0]);
+    assert.ok(audit[0].indexOf('attached=yes') !== -1, audit[0]);
 
-    // Une ligne de texte, pas un objet : c'est ce qui la rend copiable depuis la console.
-    assert.strictEqual(audit[0].indexOf('{'), -1, 'l\'audit doit rester plat : ' + audit[0]);
+    // A single line of text, not an object: that is what makes it copyable from the console.
+    assert.strictEqual(audit[0].indexOf('{'), -1, 'the audit must stay flat: ' + audit[0]);
   });
 });
 
-// ---- execution ----------------------------------------------------------------------------
+// ---- run -----------------------------------------------------------------------------------
 var failed = 0;
 tests.reduce(function (chain, t) {
   return chain.then(function () {
@@ -252,6 +252,6 @@ tests.reduce(function (chain, t) {
     });
   });
 }, Promise.resolve()).then(function () {
-  console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passes');
+  console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passed');
   process.exit(failed ? 1 : 0);
 });

@@ -1,25 +1,25 @@
-// Test de folders.js — la moitie qui manipule la vraie sidebar. Lance avec :
-//   npm install jsdom      (une seule fois, hors depot : voir plus bas)
+// Test for folders.js — the half that manipulates the real sidebar. Run with:
+//   npm install jsdom      (once only, outside the repo: see below)
 //   node test-folders-dom.js
 //
-// ⚠️ SEUL test du depot a avoir besoin d'une dependance. Le depot n'a volontairement ni
-// package.json ni node_modules — l'extension doit rester chargeable telle quelle en mode
-// developpeur. Donc : si jsdom est absent, ce fichier SE SAUTE au lieu d'echouer, et les cinq
-// autres suites continuent de tourner sans rien installer.
+// Warning: the ONLY test in the repo that needs a dependency. The repo deliberately has neither
+// package.json nor node_modules — the extension must stay loadable as-is in
+// developer mode. So: if jsdom is missing, this file SKIPS ITSELF instead of failing, and the five
+// other suites keep running without installing anything.
 //
-// Ce qu'il apporte quand meme, pour la fonctionnalite la plus fragile du depot : il monte la
-// structure DOM reelle de la sidebar (celle du tableau des selecteurs du README) et verifie les
-// deux scenarios qui, sans lui, ne se voient qu'a l'oeil dans le navigateur — le re-rendu de la
-// SPA et l'arrivee de conversations plus anciennes au scroll. Il ne remplace pas une
-// verification a la main sur claude.ai : il ne prouve que la logique de placement, pas que les
-// selecteurs correspondent encore au vrai site.
+// What it brings anyway, for the most fragile feature of the repo: it builds the
+// sidebar's real DOM structure (the one from the README's selector table) and checks the
+// two scenarios that, without it, can only be seen by eye in the browser — the SPA
+// re-render and the arrival of older conversations on scroll. It does not replace a
+// manual check on claude.ai: it only proves the placement logic, not that the
+// selectors still match the real site.
 'use strict';
 
 var JSDOM;
 try {
   JSDOM = require('jsdom').JSDOM;
 } catch (e) {
-  console.log('  -- jsdom absent : test du DOM saute (npm install jsdom pour l\'activer)');
+  console.log('  -- jsdom missing: DOM test skipped (npm install jsdom to enable it)');
   process.exit(0);
 }
 
@@ -34,13 +34,13 @@ var UUIDS = [
   '99998888-7777-6666-5555-444433332222'
 ];
 
-// Structure CONFIRMEE par inspection reelle, reproduite a l'identique : c'est tout l'interet du
-// test. Si claude.ai la change, c'est ici ET dans folders.js qu'il faut repercuter.
+// Structure CONFIRMED by real inspection, reproduced identically: that is the whole point of the
+// test. If claude.ai changes it, it must be reflected here AND in folders.js.
 //
-// Le conteneur de controles est reproduit avec ses classes reelles : cache au repos
-// (opacity-0 pointer-events-none), revele par les variants group-hover:/group-focus-within:
-// portes par le parent .group. C'est la que le bouton « − » doit se poser — s'y installer est
-// tout ce qui lui donne la meme apparition au survol que le « … » natif.
+// The control container is reproduced with its real classes: hidden at rest
+// (opacity-0 pointer-events-none), revealed by the group-hover:/group-focus-within: variants
+// carried by the .group parent. That is where the "−" button must be placed — settling there is
+// all that gives it the same hover appearance as the native "…".
 function itemHtml(u, label) {
   return '<div class="relative df-drag-shiftable">' +
            '<div class="group relative rounded-[var(--df-radius-pill)]">' +
@@ -74,8 +74,8 @@ function sidebarHtml(uuids, withScroll) {
          '</aside>';
 }
 
-// chrome bouchonne avec un vrai storage : set() previent les listeners, donc le test emprunte
-// exactement le chemin de production (ecrire -> onChanged -> relire -> redessiner).
+// chrome stubbed with a real storage: set() notifies the listeners, so the test takes
+// exactly the production path (write -> onChanged -> reread -> redraw).
 function boot(withScroll) {
   var dom = new JSDOM('<!doctype html><html><body>' + sidebarHtml(UUIDS, withScroll) + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true });
@@ -115,14 +115,14 @@ function boot(withScroll) {
     doc: win.document,
     warns: warns,
     set: function (patch) { return win.chrome.storage.local.set(patch); },
-    // Le rangement passe par un MutationObserver debounce : il faut laisser tourner la boucle.
+    // Filing goes through a debounced MutationObserver: the loop must be allowed to run.
     settle: function (ms) { return new Promise(function (r) { setTimeout(r, ms || 0); }); }
   };
 }
 
-// jsdom n'implemente ni DragEvent ni DataTransfer : on fabrique les deux. Le faux dataTransfer
-// porte un clearData() REEL, parce que c'est justement le comportement du site qu'il faut
-// pouvoir simuler — c'est l'une des deux causes du bug d'epinglage.
+// jsdom implements neither DragEvent nor DataTransfer: we build both. The fake dataTransfer
+// carries a REAL clearData(), because that is precisely the site behavior we must be able
+// to simulate — it is one of the two causes of the pinning bug.
 function fakeDataTransfer() {
   var store = {};
   return {
@@ -144,10 +144,10 @@ function fireDrag(w, el, type, data) {
   return ev;
 }
 
-// Le gestionnaire de depot du SITE, tel qu'il serait pose : sur un ancetre de nos blocs, et
-// dans les DEUX phases. La capture est le cas qui piegeait la version precedente — elle
-// s'execute avant tout gestionnaire pose plus bas, donc un stopPropagation() en bouillonnement
-// arrivait trop tard et le site epinglait quand meme.
+// The SITE's drop handler, as it would be installed: on an ancestor of our blocks, and
+// in BOTH phases. Capture is the case that trapped the previous version — it
+// runs before any handler installed further down, so a stopPropagation() in bubbling
+// came too late and the site pinned anyway.
 function spyNativeDrop(w) {
   var calls = [];
   var scroll = w.doc.querySelector('.dframe-nav-scroll');
@@ -159,9 +159,9 @@ function spyNativeDrop(w) {
   return calls;
 }
 
-// Etat de la sidebar sous forme lisible : "[Nom]" pour un dossier, l'index de la conversation
-// sinon, indente de deux espaces quand elle est rangee dedans. Un diff d'assertion se lit alors
-// d'un coup d'oeil.
+// Sidebar state in readable form: "[Name]" for a folder, the conversation index
+// otherwise, indented by two spaces when it is filed inside. An assertion diff then reads
+// at a glance.
 function layout(doc) {
   var out = [];
   doc.querySelectorAll('.df-drag-shiftable, [data-cf-folder]').forEach(function (el) {
@@ -186,13 +186,13 @@ function test(name, fn) { tests.push({ name: name, fn: fn }); }
 
 // ---- insertion ---------------------------------------------------------------------------------
 
-test('sidebar nominale : racine en tete des sections, aucun item deplace', function () {
+test('nominal sidebar: root ahead of the sections, no item moved', function () {
   var w = boot();
   return w.settle().then(function () {
     var root = w.doc.getElementById('__claude_folders_root');
     assert.ok(root, 'racine absente');
     assert.strictEqual(root.parentElement.className, 'dframe-recents-by-mode contents');
-    assert.strictEqual(root.parentElement.firstChild, root, 'la racine doit passer AVANT « Récents »');
+    assert.strictEqual(root.parentElement.firstChild, root, 'the root must come BEFORE « Récents »');
     assert.strictEqual(layout(w.doc), '0 1 2');
     assert.strictEqual(w.warns.length, 0, w.warns.join(' | '));
   });
@@ -208,7 +208,7 @@ test('conteneur scrollable absent : rien insere, sidebar native intacte', functi
 
 // ---- rangement ---------------------------------------------------------------------------------
 
-test('assignation : l item entre dans le dossier, les autres ne bougent pas', function () {
+test('assignment: the item enters the folder, the others do not move', function () {
   var w = boot();
   return w.settle()
     .then(function () { return w.set({ folders: [{ id: 'f1', name: 'Travail' }] }); })
@@ -221,9 +221,9 @@ test('assignation : l item entre dans le dossier, les autres ne bougent pas', fu
     });
 });
 
-// Le marque-page existe pour ca : sans lui, l'item reviendrait a la fin de « Recents » et
-// perdrait sa place chronologique jusqu'au prochain re-rendu du site.
-test('desassignation : l item revient a SA place, pas a la fin', function () {
+// The bookmark exists for that: without it, the item would come back to the end of "Recents" and
+// would lose its chronological place until the site's next re-render.
+test('unassignment: the item comes back to ITS place, not to the end', function () {
   var w = boot();
   return w.settle()
     .then(function () { return w.set({ folders: [{ id: 'f1', name: 'T' }] }); })
@@ -240,7 +240,7 @@ test('desassignation : l item revient a SA place, pas a la fin', function () {
     });
 });
 
-test('repli : le corps est masque, les items restent dedans', function () {
+test('collapsing: the body is hidden, the items stay inside', function () {
   var w = boot();
   return w.settle()
     .then(function () { return w.set({ folders: [{ id: 'f1', name: 'T', collapsed: true }] }); })
@@ -253,9 +253,9 @@ test('repli : le corps est masque, les items restent dedans', function () {
     });
 });
 
-// ---- suppression : le scenario ou une conversation pourrait DISPARAITRE -------------------------
+// ---- deletion: the scenario where a conversation could DISAPPEAR --------------------------------
 
-test('suppression du dossier : conversations liberees, AUCUNE perdue', function () {
+test('folder deletion: conversations freed, NONE lost', function () {
   var w = boot();
   return w.settle()
     .then(function () { return w.set({ folders: [{ id: 'f1', name: 'T' }] }); })
@@ -263,7 +263,7 @@ test('suppression du dossier : conversations liberees, AUCUNE perdue', function 
     .then(w.settle)
     .then(function () {
       assert.strictEqual(layout(w.doc), '[T]   0   2 1');
-      // Ce que le menu contextuel ecrit : folderDelete() rend les deux cles d'un coup.
+      // What the context menu writes: folderDelete() returns both keys at once.
       return w.set({ folders: [], folderAssignments: {} });
     })
     .then(w.settle)
@@ -275,9 +275,9 @@ test('suppression du dossier : conversations liberees, AUCUNE perdue', function 
     });
 });
 
-// ---- les deux scenarios qui ne se voient qu'en vrai ---------------------------------------------
+// ---- the two scenarios that can only be seen for real -------------------------------------------
 
-test('re-rendu de la SPA : le rangement se reapplique tout seul', function () {
+test('SPA re-render: the filing reapplies itself', function () {
   var w = boot();
   return w.settle()
     .then(function () { return w.set({ folders: [{ id: 'f1', name: 'T' }] }); })
@@ -285,21 +285,21 @@ test('re-rendu de la SPA : le rangement se reapplique tout seul', function () {
     .then(w.settle)
     .then(function () {
       assert.strictEqual(layout(w.doc), '[T]   0 1 2');
-      // Le site rebatit sa liste : nos blocs et les items deplaces partent avec.
+      // The site rebuilds its list: our blocks and the moved items go with it.
       var scroll = w.doc.querySelector('.dframe-nav-scroll');
       scroll.innerHTML = '<div class="dframe-recents-by-mode contents">' +
         '<div class="group/section flex flex-col gap-px">' +
         UUIDS.map(function (u, i) { return itemHtml(u, 'C' + i); }).join('') + '</div></div>';
-      return w.settle(200);   // debounce du MutationObserver
+      return w.settle(200);   // MutationObserver debounce
     })
     .then(function () {
       assert.strictEqual(layout(w.doc), '[T]   0 1 2', 'rangement non reapplique apres re-rendu');
-      // Le re-rendu a detruit le bouton avec l'ancien item : il doit revenir avec le rangement.
-      assert.strictEqual(w.doc.querySelectorAll('.cf-unfile').length, 1, 'bouton « − » non remis');
+      // The re-render destroyed the button along with the old item: it must come back with the filing.
+      assert.strictEqual(w.doc.querySelectorAll('.cf-unfile').length, 1, '"−" button not put back');
     });
 });
 
-test('conversation arrivee au scroll (pagination) : rangee sans rechargement', function () {
+test('conversation arriving on scroll (pagination): filed without a reload', function () {
   var w = boot();
   var vieux = '44445555-6666-7777-8888-999900001111';
 
@@ -307,7 +307,7 @@ test('conversation arrivee au scroll (pagination) : rangee sans rechargement', f
     .then(function () { return w.set({ folders: [{ id: 'f1', name: 'T' }] }); })
     .then(function () {
       var m = assign({ 2: 'f1' });
-      m[vieux] = 'f1';   // deja assignee, mais pas encore chargee dans le DOM
+      m[vieux] = 'f1';   // already assigned, but not yet loaded into the DOM
       return w.set({ folderAssignments: m });
     })
     .then(w.settle)
@@ -323,18 +323,18 @@ test('conversation arrivee au scroll (pagination) : rangee sans rechargement', f
     });
 });
 
-// ---- glisser-deposer : le bug d'epinglage ------------------------------------------------------
+// ---- drag and drop: the pinning bug ------------------------------------------------------------
 
-// Le scenario exact remonte en usage reel : glisser une conversation de « Récents » vers un
-// dossier custom l'epinglait dans la section native au lieu de l'assigner.
+// The exact scenario reported in real use: dragging a conversation from « Récents » to a
+// custom folder pinned it in the native section instead of assigning it.
 function dragTo(w, uuidIndex, zone, options) {
   var opts = options || {};
   var link = w.doc.querySelectorAll('a[href^="/chat/"]')[uuidIndex];
   var data = fakeDataTransfer();
 
   fireDrag(w, link, 'dragstart', data);
-  // Le site pose son propre gestionnaire de dragstart et efface le presse-papier de glissement
-  // avant d'y ecrire SON type : notre donnee disparait.
+  // The site installs its own dragstart handler and clears the drag clipboard
+  // before writing ITS type into it: our data disappears.
   if (opts.siteClearsData) data.clearData();
 
   var over = fireDrag(w, zone, 'dragover', data);
@@ -348,32 +348,32 @@ function withFolder(w) {
     .then(w.settle);
 }
 
-test('dépôt sur un dossier : assigné, et le gestionnaire du SITE n\'est jamais appelé', function () {
+test('drop on a folder: assigned, and the SITE handler is never called', function () {
   var w = boot();
   return withFolder(w).then(function () {
     var natif = spyNativeDrop(w);
     var head = w.doc.querySelector('.cf-head');
     var r = dragTo(w, 0, head);
 
-    assert.strictEqual(natif.join(','), '', 'le site a reçu l\'événement : il aurait épinglé');
-    assert.ok(r.over.defaultPrevented, 'sans preventDefault sur dragover, le dépôt est refusé');
-    assert.ok(r.drop.defaultPrevented, 'drop non neutralisé');
+    assert.strictEqual(natif.join(','), '', 'the site received the event: it would have pinned');
+    assert.ok(r.over.defaultPrevented, 'without preventDefault on dragover, the drop is refused');
+    assert.ok(r.drop.defaultPrevented, 'drop not neutralized');
     return w.settle();
   }).then(function () {
-    assert.strictEqual(layout(w.doc), '[Travail]   0 1 2', 'conversation non rangée');
+    assert.strictEqual(layout(w.doc), '[Travail]   0 1 2', 'conversation not filed');
   });
 });
 
-// Cause n° 1 du bug : le test d'appartenance se faisait sur dataTransfer.types, que le site
-// efface. cfDragging fait desormais foi.
-test('le site efface dataTransfer : le dépôt fonctionne quand même', function () {
+// Cause no. 1 of the bug: the membership test was done on dataTransfer.types, which the site
+// clears. cfDragging is now authoritative.
+test('the site clears dataTransfer: the drop works anyway', function () {
   var w = boot();
   return withFolder(w).then(function () {
     var natif = spyNativeDrop(w);
     var r = dragTo(w, 1, w.doc.querySelector('.cf-head'), { siteClearsData: true });
 
-    assert.strictEqual(r.data.types.length, 0, 'le presse-papier doit bien être vide');
-    assert.strictEqual(natif.join(','), '', 'le site a repris la main');
+    assert.strictEqual(r.data.types.length, 0, 'the clipboard must indeed be empty');
+    assert.strictEqual(natif.join(','), '', 'the site took over');
     assert.ok(r.drop.defaultPrevented);
     return w.settle();
   }).then(function () {
@@ -381,9 +381,9 @@ test('le site efface dataTransfer : le dépôt fonctionne quand même', function
   });
 });
 
-// Cause n° 2 : le site ecoutant en capture sur un ancetre passait AVANT nous. On intercepte
-// maintenant sur window, le tout premier point de la trajectoire.
-test('dépôt dans le CORPS d\'un dossier vide : même garantie', function () {
+// Cause no. 2: the site listening in capture on an ancestor went BEFORE us. We now intercept
+// on window, the very first point of the trajectory.
+test('drop into the BODY of an empty folder: same guarantee', function () {
   var w = boot();
   return withFolder(w).then(function () {
     var natif = spyNativeDrop(w);
@@ -395,9 +395,9 @@ test('dépôt dans le CORPS d\'un dossier vide : même garantie', function () {
   });
 });
 
-// L'autre moitie de l'exigence : hors de nos zones, on ne doit rien perturber, pour que la
+// The other half of the requirement: outside our zones, we must disturb nothing, so that native
 // reorganisation et l'epinglage natifs continuent de marcher.
-test('dépôt HORS de nos zones : le site reçoit tout, intact', function () {
+test('drop OUTSIDE our zones: the site receives everything, intact', function () {
   var w = boot();
   return withFolder(w).then(function () {
     var natif = spyNativeDrop(w);
@@ -407,16 +407,16 @@ test('dépôt HORS de nos zones : le site reçoit tout, intact', function () {
     assert.strictEqual(natif.join(','),
       'capture:dragover,bubble:dragover,capture:drop,bubble:drop',
       'le drag natif a été bridé alors qu\'il ne devait pas l\'être');
-    assert.strictEqual(r.drop.defaultPrevented, false, 'on a neutralisé un dépôt qui n\'est pas le nôtre');
+    assert.strictEqual(r.drop.defaultPrevented, false, 'we neutralized a drop that is not ours');
     return w.settle();
   }).then(function () {
-    assert.strictEqual(layout(w.doc), '[Travail] 0 1 2', 'une assignation a eu lieu à tort');
+    assert.strictEqual(layout(w.doc), '[Travail] 0 1 2', 'an assignment happened wrongly');
   });
 });
 
-// ---- sortie d'un dossier ------------------------------------------------------------------------
+// ---- leaving a folder ---------------------------------------------------------------------------
 
-test('la bande « Retirer » n\'apparaît que pour une conversation rangée', function () {
+test('the « Retirer » strip only appears for a filed conversation', function () {
   var w = boot();
   return withFolder(w)
     .then(function () { return w.set({ folderAssignments: assign({ 0: 'f1' }) }); })
@@ -424,19 +424,19 @@ test('la bande « Retirer » n\'apparaît que pour une conversation rangée', fu
     .then(function () {
       var out = w.doc.querySelector('.cf-out');
       assert.ok(out, 'bande absente');
-      assert.strictEqual(out.hidden, true, 'elle ne doit pas être visible au repos');
+      assert.strictEqual(out.hidden, true, 'it must not be visible at rest');
 
-      // Conversation NON rangée : rien à retirer.
+      // Conversation NOT filed: nothing to remove.
       fireDrag(w, w.doc.querySelectorAll('a[href^="/chat/"]')[1], 'dragstart', fakeDataTransfer());
       assert.strictEqual(out.hidden, true);
 
-      // Conversation rangée : la bande s'ouvre.
+      // Conversation filed: the strip opens.
       fireDrag(w, w.doc.querySelector('.cf-body a'), 'dragstart', fakeDataTransfer());
-      assert.strictEqual(out.hidden, false, 'bande non affichée pour une conversation rangée');
+      assert.strictEqual(out.hidden, false, 'strip not shown for a filed conversation');
     });
 });
 
-test('sortie par la bande : désassignée, sans que le site soit sollicité', function () {
+test('leaving through the strip: unassigned, without the site being solicited', function () {
   var w = boot();
   return withFolder(w)
     .then(function () { return w.set({ folderAssignments: assign({ 1: 'f1' }) }); })
@@ -453,28 +453,28 @@ test('sortie par la bande : désassignée, sans que le site soit sollicité', fu
       fireDrag(w, out, 'dragover', data);
       var drop = fireDrag(w, out, 'drop', data);
 
-      assert.strictEqual(natif.join(','), '', 'le site a été sollicité : risque d\'épinglage');
+      assert.strictEqual(natif.join(','), '', 'the site was solicited: risk of pinning');
       assert.ok(drop.defaultPrevented);
       return w.settle();
     })
     .then(function () {
-      assert.strictEqual(layout(w.doc), '[Travail] 0 1 2', 'conversation non sortie du dossier');
+      assert.strictEqual(layout(w.doc), '[Travail] 0 1 2', 'conversation not taken out of the folder');
     });
 });
 
-// ---- bouton « − » --------------------------------------------------------------------------------
+// ---- "−" button ---------------------------------------------------------------------------------
 
-// L'exigence n'est pas seulement « un bouton existe » : c'est qu'il vive dans le conteneur de
-// controles NATIF, seul endroit ou il herite du survol sans qu'on gere une opacite.
-test('bouton « − » : uniquement sur les items rangés, dans le conteneur de contrôles natif', function () {
+// The requirement is not merely "a button exists": it is that it lives in the NATIVE control
+// container, the only place where it inherits the hover without our managing an opacity.
+test('"−" button: only on filed items, in the native control container', function () {
   var w = boot();
   return withFolder(w)
     .then(function () { return w.set({ folderAssignments: assign({ 1: 'f1' }) }); })
     .then(w.settle)
     .then(function () {
       var btns = w.doc.querySelectorAll('.cf-unfile');
-      assert.strictEqual(btns.length, 1, 'un bouton, et seulement sur la conversation rangée');
-      assert.ok(btns[0].closest('.cf-body'), 'le bouton n\'est pas sur l\'item rangé');
+      assert.strictEqual(btns.length, 1, 'one button, and only on the filed conversation');
+      assert.ok(btns[0].closest('.cf-body'), 'the button is not on the filed item');
 
       var bar = btns[0].parentElement;
       assert.ok(bar.querySelector('button[aria-label^="Plus d\'options"]'),
@@ -486,9 +486,9 @@ test('bouton « − » : uniquement sur les items rangés, dans le conteneur de 
     });
 });
 
-// Le point de la demande : une seule logique de retrait, deux entrees. On rejoue les deux
-// scenarios de bout en bout et on compare l'etat complet — DOM et storage.
-test('bouton « − » : retrait identique au dépôt sur la bande « Retirer »', function () {
+// The point of the request: a single removal logic, two entry points. We replay both
+// scenarios end to end and compare the complete state — DOM and storage.
+test('"−" button: removal identical to the drop on the « Retirer » strip', function () {
   function etat(w) {
     return w.win.chrome.storage.local.get().then(function (store) {
       return layout(w.doc) + ' | ' + JSON.stringify(store.folderAssignments || {});
@@ -520,38 +520,38 @@ test('bouton « − » : retrait identique au dépôt sur la bande « Retirer »
     })
     .then(function () { return range(parBouton); })
     .then(function (w) {
-      // Un gestionnaire du site sur un ancetre, en bouillonnement : c'est ce que le
-      // stopPropagation() du bouton doit arreter. (En capture, rien ne peut l'arreter : la
-      // capture descend depuis window, et le site n'a de toute facon pas de clic de ligne en
-      // capture — sinon le « … » natif d'a cote naviguerait lui aussi.)
+      // A site handler on an ancestor, in bubbling: that is what the button's
+      // stopPropagation() must stop. (In capture, nothing can stop it: capture
+      // descends from window, and the site has no row click in capture anyway —
+      // otherwise the native "…" next to it would navigate too.)
       w.doc.querySelector('.dframe-nav-scroll')
         .addEventListener('click', function () { natif.push('bubble:click'); }, false);
 
       var ev = new w.win.Event('click', { bubbles: true, cancelable: true });
       w.doc.querySelector('.cf-body .cf-unfile').dispatchEvent(ev);
-      assert.ok(ev.defaultPrevented, 'le clic doit être neutralisé : sinon il remonte à la ligne');
+      assert.ok(ev.defaultPrevented, 'the click must be neutralized: otherwise it goes up to the row');
       return w.settle();
     })
     .then(function () {
-      assert.strictEqual(natif.join(','), '', 'le clic est remonté jusqu\'à un ancêtre du site');
+      assert.strictEqual(natif.join(','), '', 'the click went up to a site ancestor');
       return Promise.all([etat(parBande), etat(parBouton)]);
     })
     .then(function (deux) {
-      assert.strictEqual(deux[1], deux[0], 'le bouton ne produit pas le même résultat que la bande');
-      assert.strictEqual(deux[1], '[Travail] 0 1 2 | {}', 'conversation non sortie du dossier');
+      assert.strictEqual(deux[1], deux[0], 'the button does not produce the same result as the strip');
+      assert.strictEqual(deux[1], '[Travail] 0 1 2 | {}', 'conversation not taken out of the folder');
       assert.strictEqual(parBouton.doc.querySelectorAll('.cf-unfile').length, 0,
         'le bouton est reparti dans « Récents » avec l\'item');
     });
 });
 
-// LE BUG remonte en usage reel : le PREMIER clic sur « − » ne faisait rien, le suivant — et tous
-// les suivants — marchait, sans rechargement de la page. Cause : le gestionnaire etait pose sur le
-// bouton, donc en phase de BOUILLONNEMENT. Une bibliotheque de glissement arme couramment un
-// « avaleur de clic » a usage unique en fin de geste, pour que le clic qui suit un glissement ne
-// declenche rien ; pose en CAPTURE sur un ancetre, il stoppe la propagation AVANT que l'evenement
-// n'atteigne le bouton. Une fois l'avaleur consomme, tout redevient normal — d'ou « le premier clic
-// seulement ». Exactement le defaut n° 2 du tableau du depot, au meme endroit du fichier.
-test('bouton « − » : un avaleur de clic du site ne peut plus manger le retrait', function () {
+// THE BUG reported in real use: the FIRST click on "−" did nothing, the next one — and all
+// the ones after — worked, without reloading the page. Cause: the handler was installed on the
+// button, hence in the BUBBLING phase. A drag library commonly arms a single-use
+// "click swallower" at the end of a gesture, so that the click following a drag triggers
+// nothing; installed in CAPTURE on an ancestor, it stops propagation BEFORE the event
+// reaches the button. Once the swallower is consumed, everything is normal again — hence "the first
+// click only". Exactly flaw no. 2 of the repo's table, at the same place in the file.
+test('"−" button: a site click swallower can no longer eat the removal', function () {
   var w = boot();
   var avale = 0;
 
@@ -568,20 +568,20 @@ test('bouton « − » : un avaleur de clic du site ne peut plus manger le retra
       assert.strictEqual(layout(w.doc), '[Travail]   1 0 2');
       w.doc.addEventListener('click', function (e) { avale++; e.stopPropagation(); }, true);
 
-      // Témoin : le repli d'un dossier, lui, est bien géré sur l'élément (bouillonnement). Il
-      // prouve que l'avaleur est réellement en position de manger un clic — sans ce témoin, le
-      // test passerait aussi avec un avaleur inoffensif, et ne garantirait rien.
+      // Control: folder collapsing, for its part, is indeed handled on the element (bubbling). It
+      // proves the swallower really is in a position to eat a click — without this control, the
+      // test would also pass with a harmless swallower, and would guarantee nothing.
       return clic('.cf-head');
     })
     .then(function () {
-      assert.strictEqual(avale, 1, 'l\'avaleur n\'a pas joué : le test ne prouverait rien');
+      assert.strictEqual(avale, 1, 'the swallower did not fire: the test would prove nothing');
       assert.strictEqual(w.doc.querySelector('[data-cf-folder]').className, '',
         'l\'avaleur laisse passer les clics : il ne prouve rien');
 
       return clic('.cf-body .cf-unfile');
     })
     .then(function () {
-      assert.strictEqual(avale, 1, 'le clic est descendu jusqu\'à l\'avaleur au lieu d\'être pris');
+      assert.strictEqual(avale, 1, 'the click went down to the swallower instead of being taken');
       assert.strictEqual(layout(w.doc), '[Travail] 0 1 2',
         'le clic a été mangé avant d\'atteindre le retrait');
     });
@@ -589,9 +589,9 @@ test('bouton « − » : un avaleur de clic du site ne peut plus manger le retra
 
 // ---- menu contextuel et modale de renommage ------------------------------------------------------
 //
-// Les deux composants qui copient un composant natif de claude.ai (menu « … » d'une conversation,
-// modale de renommage d'une conversation). Ce qu'ils DECIDENT est teste dans test-folders.js ; ce
-// qui suit verifie ce qu'ils AFFICHENT et ce qu'ils ecrivent.
+// The two components that copy a native claude.ai component (a conversation's "…" menu,
+// a conversation's rename modal). What they DECIDE is tested in test-folders.js; what
+// follows checks what they DISPLAY and what they write.
 
 function ouvreMenu(w) {
   var ev = new w.win.Event('contextmenu', { bubbles: true, cancelable: true });
@@ -611,8 +611,8 @@ function touche(w, el, key) {
   return ev;
 }
 
-// Aucune des trois commandes ne doit plus passer par un composant du navigateur : les compteurs
-// restent a zero pour toute la duree du test.
+// None of the three commands must go through a browser component anymore: the counters
+// stay at zero for the whole duration of the test.
 function espionneNatif(w) {
   var natif = { prompt: 0, confirm: 0 };
   w.win.prompt = function () { natif.prompt++; return 'par le prompt natif'; };
@@ -635,13 +635,13 @@ function modaleOuverte(w, natif) {
   };
 }
 
-// Ouvre le menu puis la modale de renommage.
+// Opens the menu then the rename modal.
 function ouvreRenommage(w) {
   var natif = espionneNatif(w);
   clique(w, ouvreMenu(w).querySelectorAll('.cf-item')[0]);
 
   var d = modaleOuverte(w, natif);
-  assert.strictEqual(w.doc.querySelector('.cf-menu'), null, 'le menu doit se fermer derrière');
+  assert.strictEqual(w.doc.querySelector('.cf-menu'), null, 'the menu must close behind');
   d.enregistrer = d.action;
   return d;
 }
@@ -658,7 +658,7 @@ function ouvreSuppression(w) {
   return modaleOuverte(w, natif);
 }
 
-test('menu contextuel : conteneur et items à la structure du menu natif', function () {
+test('context menu: container and items with the native menu structure', function () {
   var w = boot();
   return withFolder(w).then(function () {
     var menu = ouvreMenu(w);
@@ -669,49 +669,49 @@ test('menu contextuel : conteneur et items à la structure du menu natif', funct
     assert.strictEqual(items.length, 2, 'renommer + supprimer');
     items.forEach(function (it) {
       assert.strictEqual(it.getAttribute('role'), 'menuitem');
-      // Icone au trait de l'extension, pas la police de ligatures du site.
-      assert.ok(it.querySelector('svg path'), 'item sans icône SVG');
-      assert.ok(it.querySelector('.cf-item-label').textContent, 'item sans libellé');
+      // The extension's stroke icon, not the site's ligature font.
+      assert.ok(it.querySelector('svg path'), 'item without an SVG icon');
+      assert.ok(it.querySelector('.cf-item-label').textContent, 'item without a label');
     });
-    assert.strictEqual(menu.querySelectorAll('.cf-swatch').length, 8, 'palette absente du menu');
+    assert.strictEqual(menu.querySelectorAll('.cf-swatch').length, 8, 'palette missing from the menu');
   });
 });
 
-// L'invariant qui rend acceptable de DEDUIRE les noms de tokens du site depuis leurs classes
-// Tailwind : un nom mal deduit ne doit jamais laisser une couleur indefinie. Si ce test casse,
-// c'est qu'un var(--cds-…) a ete ajoute sans repli — et ce composant-la deviendra invisible le
-// jour ou le token n'existe pas.
-test('aucun token du site n\'est utilisé sans valeur de repli', function () {
+// The invariant that makes it acceptable to DEDUCE the site's token names from their Tailwind
+// classes: a badly deduced name must never leave a color undefined. If this test breaks,
+// it means a var(--cds-…) was added without a fallback — and that component will become invisible the
+// day the token does not exist.
+test('no site token is used without a fallback value', function () {
   var w = boot();
   return w.settle().then(function () {
     var css = w.doc.getElementById('__claude_folders_style').textContent;
     var refs = css.match(/var\(--cds-[a-z0-9-]+[,)]/g) || [];
 
-    assert.ok(refs.length >= 8, 'les tokens du site ne sont plus lus du tout (' + refs.length + ')');
+    assert.ok(refs.length >= 8, 'the site tokens are no longer read at all (' + refs.length + ')');
     refs.forEach(function (r) {
-      assert.ok(r.slice(-1) === ',', 'sans repli : ' + r);
+      assert.ok(r.slice(-1) === ',', 'without a fallback: ' + r);
     });
-    assert.strictEqual(css.indexOf('#1c1c1e'), -1, 'ancien menu sombre en dur toujours présent');
+    assert.strictEqual(css.indexOf('#1c1c1e'), -1, 'old hard-coded dark menu still present');
   });
 });
 
-test('renommage : modale pré-remplie, focalisée, texte sélectionné', function () {
+test('renaming: modal pre-filled, focused, text selected', function () {
   var w = boot();
   return withFolder(w).then(function () {
     var d = ouvreRenommage(w);
 
-    assert.strictEqual(d.input.value, 'Travail', 'le nom actuel doit être pré-rempli');
-    assert.strictEqual(w.doc.activeElement, d.input, 'le champ n\'a pas le focus');
+    assert.strictEqual(d.input.value, 'Travail', 'the current name must be pre-filled');
+    assert.strictEqual(w.doc.activeElement, d.input, 'the field does not have the focus');
     assert.strictEqual(d.input.selectionStart, 0);
-    assert.strictEqual(d.input.selectionEnd, 'Travail'.length, 'texte non présélectionné');
-    assert.strictEqual(d.input.maxLength, w.win.FOLDER_NAME_MAX, 'longueur non bornée');
+    assert.strictEqual(d.input.selectionEnd, 'Travail'.length, 'text not preselected');
+    assert.strictEqual(d.input.maxLength, w.win.FOLDER_NAME_MAX, 'length not bounded');
     assert.strictEqual(d.modal.querySelector('[role="dialog"]').className, 'cf-modal-box');
     assert.strictEqual(d.annuler.textContent, 'Annuler');
     assert.strictEqual(d.enregistrer.textContent, 'Enregistrer');
   });
 });
 
-test('Entrée enregistre et referme, comme le bouton « Enregistrer »', function () {
+test('Enter saves and closes, like the « Enregistrer » button', function () {
   function renomme(w, parLaTouche) {
     return withFolder(w).then(function () {
       var d = ouvreRenommage(w);
@@ -719,25 +719,25 @@ test('Entrée enregistre et referme, comme le bouton « Enregistrer »', functio
       d.input.dispatchEvent(new w.win.Event('input', { bubbles: true }));
 
       if (parLaTouche) {
-        assert.ok(touche(w, d.input, 'Enter').defaultPrevented, 'Entrée non consommée');
+        assert.ok(touche(w, d.input, 'Enter').defaultPrevented, 'Enter not consumed');
       } else {
         clique(w, d.enregistrer);
       }
-      assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+      assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modal stayed open');
       return w.settle();
     }).then(function () {
-      // Le nom est nettoye a l'ecriture, comme par le prompt qu'on remplace.
+      // The name is cleaned on write, as by the prompt we are replacing.
       return w.doc.querySelector('.cf-name').textContent;
     });
   }
 
   return Promise.all([renomme(boot(), true), renomme(boot(), false)]).then(function (deux) {
-    assert.strictEqual(deux[0], 'Perso', 'Entrée n\'a pas enregistré');
-    assert.strictEqual(deux[1], deux[0], 'les deux entrées ne donnent pas le même résultat');
+    assert.strictEqual(deux[0], 'Perso', 'Enter did not save');
+    assert.strictEqual(deux[1], deux[0], 'the two entry points do not give the same result');
   });
 });
 
-test('Échap et « Annuler » ferment sans rien écrire', function () {
+test('Escape and « Annuler » close without writing anything', function () {
   function abandonne(w, parLaTouche) {
     return withFolder(w).then(function () {
       var d = ouvreRenommage(w);
@@ -746,7 +746,7 @@ test('Échap et « Annuler » ferment sans rien écrire', function () {
       if (parLaTouche) touche(w, d.input, 'Escape');
       else clique(w, d.annuler);
 
-      assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+      assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modal stayed open');
       return w.settle();
     }).then(function () {
       return w.doc.querySelector('.cf-name').textContent;
@@ -754,36 +754,36 @@ test('Échap et « Annuler » ferment sans rien écrire', function () {
   }
 
   return Promise.all([abandonne(boot(), true), abandonne(boot(), false)]).then(function (deux) {
-    assert.strictEqual(deux[0], 'Travail', 'Échap a enregistré');
-    assert.strictEqual(deux[1], 'Travail', '« Annuler » a enregistré');
+    assert.strictEqual(deux[0], 'Travail', 'Escape saved');
+    assert.strictEqual(deux[1], 'Travail', '« Annuler » saved');
   });
 });
 
-// Fermer sur un nom vide se lirait comme une sauvegarde reussie, alors que folderRename()
-// ignorerait la saisie : la modale reste donc ouverte, et le bouton le dit.
-test('nom vidé : Entrée ne ferme rien et « Enregistrer » est désactivé', function () {
+// Closing on an empty name would read as a successful save, whereas folderRename()
+// would ignore the input: so the modal stays open, and the button says so.
+test('name emptied: Enter closes nothing and « Enregistrer » is disabled', function () {
   var w = boot();
   return withFolder(w).then(function () {
     var d = ouvreRenommage(w);
-    assert.strictEqual(d.enregistrer.disabled, false, 'le nom actuel est pourtant valide');
+    assert.strictEqual(d.enregistrer.disabled, false, 'the current name is valid though');
 
     d.input.value = '   ';
     d.input.dispatchEvent(new w.win.Event('input', { bubbles: true }));
-    assert.strictEqual(d.enregistrer.disabled, true, 'bouton actif sur un nom vide');
+    assert.strictEqual(d.enregistrer.disabled, true, 'button active on an empty name');
 
     touche(w, d.input, 'Enter');
-    assert.ok(w.doc.querySelector('.cf-modal'), 'la modale s\'est fermée sur un nom vide');
+    assert.ok(w.doc.querySelector('.cf-modal'), 'the modal closed on an empty name');
 
     d.input.value = 'Perso';
     d.input.dispatchEvent(new w.win.Event('input', { bubbles: true }));
-    assert.strictEqual(d.enregistrer.disabled, false, 'bouton resté désactivé');
+    assert.strictEqual(d.enregistrer.disabled, false, 'button stayed disabled');
   });
 });
 
-// claude.ai ecoute le clavier sur le document pour ses propres raccourcis. Une frappe faite dans
-// notre champ n'a rien a y faire — sans quoi taper « / » ou « e » dans un nom de dossier
-// declencherait un raccourci du site.
-test('les frappes de la modale ne parviennent pas au site', function () {
+// claude.ai listens to the keyboard on the document for its own shortcuts. A keystroke made in
+// our field has no business there — otherwise typing "/" or "e" in a folder name
+// would trigger a site shortcut.
+test('the modal keystrokes do not reach the site', function () {
   var w = boot();
   var recu = [];
 
@@ -795,31 +795,31 @@ test('les frappes de la modale ne parviennent pas au site', function () {
     touche(w, d.input, '/');
     touche(w, d.input, 'Escape');
 
-    assert.strictEqual(recu.join(','), '', 'le site a reçu les frappes : ' + recu.join(','));
+    assert.strictEqual(recu.join(','), '', 'the site received the keystrokes: ' + recu.join(','));
   });
 });
 
-// ---- création : la même modale de saisie ---------------------------------------------------------
+// ---- creation: the same input modal --------------------------------------------------------------
 
-test('« + » : modale de création, champ vide, bouton « Créer »', function () {
+test('"+": creation modal, empty field, « Créer » button', function () {
   var w = boot();
   return w.settle().then(function () {
     var d = ouvreCreation(w);
 
-    assert.strictEqual(d.input.value, '', 'aucun nom ne doit être pré-rempli');
-    assert.strictEqual(w.doc.activeElement, d.input, 'le champ n\'a pas le focus');
+    assert.strictEqual(d.input.value, '', 'no name must be pre-filled');
+    assert.strictEqual(w.doc.activeElement, d.input, 'the field does not have the focus');
     assert.strictEqual(d.modal.querySelector('.cf-modal-title').textContent, 'Nouveau dossier');
     assert.strictEqual(d.annuler.textContent, 'Annuler');
     assert.strictEqual(d.action.textContent, 'Créer');
-    // Le meme garde-fou qu'au renommage : rien a creer tant que le champ est vide.
-    assert.strictEqual(d.action.disabled, true, 'bouton actif sur un champ vide');
+    // The same guard as when renaming: nothing to create as long as the field is empty.
+    assert.strictEqual(d.action.disabled, true, 'button active on an empty field');
 
     d.input.value = '  Travail  ';
     d.input.dispatchEvent(new w.win.Event('input', { bubbles: true }));
     assert.strictEqual(d.action.disabled, false);
 
-    assert.ok(touche(w, d.input, 'Enter').defaultPrevented, 'Entrée non consommée');
-    assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+    assert.ok(touche(w, d.input, 'Enter').defaultPrevented, 'Enter not consumed');
+    assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modal stayed open');
     return w.settle();
   }).then(function () {
     assert.strictEqual(w.doc.querySelector('.cf-name').textContent, 'Travail',
@@ -827,7 +827,7 @@ test('« + » : modale de création, champ vide, bouton « Créer »', function 
   });
 });
 
-test('création abandonnée (Échap, « Annuler », fond) : aucun dossier', function () {
+test('creation abandoned (Escape, « Annuler », backdrop): no folder', function () {
   var w = boot();
 
   function abandonne(ferme) {
@@ -835,7 +835,7 @@ test('création abandonnée (Échap, « Annuler », fond) : aucun dossier', func
     d.input.value = 'Jamais créé';
     d.input.dispatchEvent(new w.win.Event('input', { bubbles: true }));
     ferme(w, d);
-    assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+    assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modal stayed open');
   }
 
   return w.settle().then(function () {
@@ -846,24 +846,24 @@ test('création abandonnée (Échap, « Annuler », fond) : aucun dossier', func
     });
     return w.settle();
   }).then(function () {
-    assert.strictEqual(w.doc.querySelectorAll('[data-cf-folder]').length, 0, 'un dossier a été créé');
+    assert.strictEqual(w.doc.querySelectorAll('[data-cf-folder]').length, 0, 'a folder was created');
   });
 });
 
-// Le clic dans la BOITE ne doit pas fermer : c'est le piege classique du « clic sur le fond »
-// posé sans distinguer la cible de l'élément écouté.
-test('clic dans la boîte : la modale reste ouverte', function () {
+// A click in the BOX must not close: it is the classic trap of the "click on the backdrop"
+// installed without distinguishing the target from the listened element.
+test('click in the box: the modal stays open', function () {
   var w = boot();
   return w.settle().then(function () {
     var d = ouvreCreation(w);
     d.input.dispatchEvent(new w.win.Event('mousedown', { bubbles: true }));
-    assert.ok(w.doc.querySelector('.cf-modal'), 'un clic dans le champ a fermé la modale');
+    assert.ok(w.doc.querySelector('.cf-modal'), 'a click in the field closed the modal');
   });
 });
 
-// ---- suppression : confirmation stylée -----------------------------------------------------------
+// ---- deletion: styled confirmation ---------------------------------------------------------------
 
-test('suppression : confirmation sans champ, bouton d\'alerte, focus sur « Annuler »', function () {
+test('deletion: confirmation without a field, danger button, focus on « Annuler »', function () {
   var w = boot();
   return withFolder(w)
     .then(function () { return w.set({ folderAssignments: assign({ 0: 'f1', 1: 'f1' }) }); })
@@ -871,7 +871,7 @@ test('suppression : confirmation sans champ, bouton d\'alerte, focus sur « Annu
     .then(function () {
       var d = ouvreSuppression(w);
 
-      assert.strictEqual(d.input, null, 'une confirmation n\'a pas de champ de saisie');
+      assert.strictEqual(d.input, null, 'a confirmation has no input field');
       assert.ok(d.message, 'message absent');
       assert.strictEqual(d.modal.querySelector('.cf-modal-title').textContent,
         'Supprimer le dossier « Travail » ?');
@@ -884,18 +884,18 @@ test('suppression : confirmation sans champ, bouton d\'alerte, focus sur « Annu
         'le bouton destructeur doit porter la couleur d\'alerte, pas le primaire foncé');
       assert.strictEqual(d.action.className.indexOf('cf-modal-btn-primary'), -1);
 
-      // Rien a valider : aucun des deux boutons n'est grise, jamais.
+      // Nothing to validate: neither of the two buttons is ever greyed out.
       assert.strictEqual(d.annuler.disabled, false);
       assert.strictEqual(d.action.disabled, false);
 
-      // Le focus est sur « Annuler » : Entree referme au lieu de detruire, contrairement a
-      // window.confirm dont la touche Entree valide.
+      // The focus is on « Annuler »: Enter closes instead of destroying, unlike
+      // window.confirm, whose Enter key confirms.
       assert.strictEqual(w.doc.activeElement, d.annuler,
         'le focus doit être sur « Annuler », pas sur le bouton destructeur');
     });
 });
 
-test('suppression confirmée : dossier supprimé, conversations libérées', function () {
+test('deletion confirmed: folder deleted, conversations freed', function () {
   var w = boot();
   return withFolder(w)
     .then(function () { return w.set({ folderAssignments: assign({ 0: 'f1', 2: 'f1' }) }); })
@@ -903,22 +903,22 @@ test('suppression confirmée : dossier supprimé, conversations libérées', fun
     .then(function () {
       assert.strictEqual(layout(w.doc), '[Travail]   0   2 1');
       clique(w, ouvreSuppression(w).action);
-      assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+      assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modal stayed open');
       return w.settle();
     })
     .then(function () {
-      assert.strictEqual(w.doc.querySelectorAll('[data-cf-folder]').length, 0, 'dossier non supprimé');
-      assert.strictEqual(layout(w.doc), '0 1 2', 'une conversation a été perdue avec le dossier');
+      assert.strictEqual(w.doc.querySelectorAll('[data-cf-folder]').length, 0, 'folder not deleted');
+      assert.strictEqual(layout(w.doc), '0 1 2', 'a conversation was lost with the folder');
     });
 });
 
-test('suppression abandonnée (Échap, « Annuler », fond) : rien n\'est touché', function () {
+test('deletion abandoned (Escape, « Annuler », backdrop): nothing is touched', function () {
   var w = boot();
 
   function abandonne(ferme) {
     var d = ouvreSuppression(w);
     ferme(w, d);
-    assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modale restée ouverte');
+    assert.strictEqual(w.doc.querySelector('.cf-modal'), null, 'modal stayed open');
   }
 
   return withFolder(w)
@@ -933,23 +933,23 @@ test('suppression abandonnée (Échap, « Annuler », fond) : rien n\'est touch�
       return w.settle();
     })
     .then(function () {
-      assert.strictEqual(layout(w.doc), '[Travail]   1 0 2', 'le dossier ou son contenu a bougé');
+      assert.strictEqual(layout(w.doc), '[Travail]   1 0 2', 'the folder or its content moved');
     });
 });
 
 // ---- repli pointeur ------------------------------------------------------------------------------
 
-// Si le site glisse au POINTEUR (ce que suggere « df-drag-shiftable ») et non en HTML5, aucun
-// dragstart n'est emis et toute la voie precedente reste muette. Ce repli prend alors le relais.
-test('glissement au pointeur, sans aucun événement HTML5 : rangé quand même', function () {
+// If the site drags with the POINTER (as "df-drag-shiftable" suggests) and not in HTML5, no
+// dragstart is emitted and the whole path above stays silent. This fallback then takes over.
+test('pointer drag, without any HTML5 event: filed anyway', function () {
   var w = boot();
   return withFolder(w).then(function () {
     var head = w.doc.querySelector('.cf-head');
-    w.doc.elementFromPoint = function () { return head; };   // jsdom ne le fournit pas
+    w.doc.elementFromPoint = function () { return head; };   // jsdom does not provide it
 
     var link = w.doc.querySelectorAll('a[href^="/chat/"]')[0];
     link.dispatchEvent(new w.win.Event('pointerdown', { bubbles: true }));
-    // jsdom n'a pas PointerEvent : on pose les coordonnées et le bouton à la main.
+    // jsdom has no PointerEvent: we set the coordinates and the button by hand.
     var down = new w.win.Event('pointerdown', { bubbles: true });
     down.button = 0; down.clientX = 10; down.clientY = 10;
     link.dispatchEvent(down);
@@ -964,11 +964,11 @@ test('glissement au pointeur, sans aucun événement HTML5 : rangé quand même'
 
     return w.settle();
   }).then(function () {
-    assert.strictEqual(layout(w.doc), '[Travail]   0 1 2', 'le repli pointeur n\'a rien rangé');
+    assert.strictEqual(layout(w.doc), '[Travail]   0 1 2', 'the pointer fallback filed nothing');
   });
 });
 
-test('simple clic sur une conversation : aucun rangement', function () {
+test('plain click on a conversation: no filing', function () {
   var w = boot();
   return withFolder(w).then(function () {
     var head = w.doc.querySelector('.cf-head');
@@ -980,16 +980,16 @@ test('simple clic sur une conversation : aucun rangement', function () {
     link.dispatchEvent(down);
 
     var up = new w.win.Event('pointerup', { bubbles: true, cancelable: true });
-    up.clientX = 11; up.clientY = 10;   // sous le seuil de glissement
+    up.clientX = 11; up.clientY = 10;   // below the drag threshold
     link.dispatchEvent(up);
 
     return w.settle();
   }).then(function () {
-    assert.strictEqual(layout(w.doc), '[Travail] 0 1 2', 'un clic a été pris pour un glissement');
+    assert.strictEqual(layout(w.doc), '[Travail] 0 1 2', 'a click was taken for a drag');
   });
 });
 
-// ---- execution ----------------------------------------------------------------------------
+// ---- run -----------------------------------------------------------------------------------
 var failed = 0;
 tests.reduce(function (chain, t) {
   return chain.then(function () {
@@ -1002,6 +1002,6 @@ tests.reduce(function (chain, t) {
     });
   });
 }, Promise.resolve()).then(function () {
-  console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passes');
+  console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passed');
   process.exit(failed ? 1 : 0);
 });

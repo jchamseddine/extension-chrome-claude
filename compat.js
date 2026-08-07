@@ -1,46 +1,46 @@
-// A charger EN PREMIER dans chaque contexte, avant tout autre script du depot.
+// To be loaded FIRST in every context, before any other script of the repo.
 //
-// FILET DE SECURITE, PAS LE CORRECTIF D'UN BUG CONSTATE. Verifie en conditions reelles sur
-// Firefox 153.0 : chrome.* y rend deja de vraies promesses, exactement comme browser.*, donc
-// les ~29 chaines .then() du depot fonctionnent telles quelles, sans ce fichier.
+// SAFETY NET, NOT THE FIX FOR AN OBSERVED BUG. Verified under real conditions on
+// Firefox 153.0: chrome.* already returns real promises there, exactly like browser.*, so
+// the repo's ~29 .then() chains work as-is, without this file.
 //
-// Pourquoi l'ajouter quand meme : ce comportement n'est documente NULLE PART. MDN et Extension
-// Workshop disent seulement que chrome.* ACCEPTE les callbacks — jamais qu'il rend une
-// promesse quand on omet le callback. C'est un detail d'implementation (une seule
-// implementation promise-based, le callback n'en etant qu'une enveloppe optionnelle), pas un
-// contrat. Une surface non documentee peut changer sans note de version, et la panne serait
-// ici totale et silencieuse : les 29 sites levant TypeError d'un coup, dans tous les contextes
-// a la fois. On aliase donc sur browser.*, qui est documente.
+// Why add it anyway: this behavior is documented NOWHERE. MDN and Extension
+// Workshop only say that chrome.* ACCEPTS callbacks — never that it returns a
+// promise when the callback is omitted. It is an implementation detail (a single
+// promise-based implementation, the callback being only an optional wrapper), not a
+// contract. An undocumented surface can change without a release note, and the failure would
+// here be total and silent: the 29 sites throwing TypeError at once, in every context
+// at the same time. So we alias onto browser.*, which is documented.
 //
-// Ne peut rien casser, par construction :
-//   - Firefox      : l'alias reussit et tout le depot passe sur la surface documentee ;
-//   - Chrome ≥ 148 : "browser" existe AUSSI depuis cette version et expose les MEMES objets
-//     d'API que "chrome" (chrome.tabs === browser.tabs, documente par Google), donc l'alias
-//     s'y fait mais ne change rien au comportement. Mesure faite sur Chrome 150 : les deux
-//     objets de PREMIER niveau restent distincts (chrome === browser vaut false), seules les
-//     sous-API sont partagees — ne pas se servir de "chrome === browser" comme preuve que ce
-//     fichier a tourne quelque part, ce n'en est pas une ;
-//   - Chrome < 148 : "browser" n'existe pas, la condition est fausse, ce fichier ne fait RIEN ;
-//   - si le global n'etait pas assignable, le catch nous laisse sur le chrome.* natif,
-//     c'est-a-dire exactement l'etat qui fonctionne aujourd'hui.
+// Cannot break anything, by construction:
+//   - Firefox      : the alias succeeds and the whole repo moves to the documented surface;
+//   - Chrome >= 148: "browser" ALSO exists since that version and exposes the SAME API
+//     objects as "chrome" (chrome.tabs === browser.tabs, documented by Google), so the alias
+//     happens there but changes nothing in behavior. Measured on Chrome 150: the two
+//     TOP-level objects stay distinct (chrome === browser is false), only the
+//     sub-APIs are shared — do not use "chrome === browser" as proof that this
+//     file has run somewhere, it is not one;
+//   - Chrome < 148 : "browser" does not exist, the condition is false, this file does NOTHING;
+//   - if the global were not assignable, the catch leaves us on the native chrome.*,
+//     that is to say exactly the state that works today.
 //
-// ⚠️ Une seule condition connue desactive "browser" cote Chrome : declarer un devtools_page
-// eteint le namespace pour TOUTE l'extension. On n'en a pas. Si on en ajoutait un, la
-// condition ci-dessous deviendrait fausse et on retomberait sur chrome.* natif — degradation
-// propre, mais a savoir.
+// Warning: one known condition disables "browser" on the Chrome side: declaring a devtools_page
+// turns the namespace off for the WHOLE extension. We have none. If we added one, the
+// condition below would become false and we would fall back to the native chrome.* — clean
+// degradation, but worth knowing.
 //
-// ⚠️ CONSEQUENCE A NE PAS OUBLIER EN ECRIVANT DU CODE : apres cet alias, "chrome.*" EST
-// "browser.*", qui est promise-only cote Firefox et refuse un argument callback surnumeraire.
-// Tout appel en style callback devient donc suspect. Le depot n'en compte qu'UN SEUL,
-// show() dans background.js — partout ailleurs c'est du .then(). Ne pas en reintroduire.
+// Warning: A CONSEQUENCE NOT TO FORGET WHEN WRITING CODE: after this alias, "chrome.*" IS
+// "browser.*", which is promise-only on the Firefox side and rejects a superfluous callback argument.
+// Any call in callback style therefore becomes suspect. The repo has only ONE,
+// show() in background.js — everywhere else it is .then(). Do not reintroduce any.
 //
-// ⚠️ Ce fichier est evalue UNE FOIS PAR ENTREE content_scripts, soit six fois par frame, dans
-// le meme monde isole. Il doit donc rester strictement idempotent : aucun compteur, aucun log,
-// aucun effet de bord cumulatif ici.
+// Warning: this file is evaluated ONCE PER content_scripts ENTRY, that is six times per frame, in
+// the same isolated world. It must therefore stay strictly idempotent: no counter, no log,
+// no cumulative side effect here.
 //
-// Volontairement sans 'use strict' et sans IIFE : il faut assigner le global "chrome" lui-meme,
-// que tout le reste du depot appelle sous ce nom. C'est ce qui evite d'avoir a renommer les
-// ~150 occurrences de "chrome." en un nom d'alias.
+// Deliberately without 'use strict' and without an IIFE: we need to assign the "chrome" global itself,
+// which the rest of the repo calls by that name. That is what avoids having to rename the
+// ~150 occurrences of "chrome." to an alias name.
 try {
   if (typeof browser !== 'undefined' && browser.runtime) chrome = browser;
-} catch (e) { /* global non assignable : on garde le chrome.* natif */ }
+} catch (e) { /* global not assignable: we keep the native chrome.* */ }

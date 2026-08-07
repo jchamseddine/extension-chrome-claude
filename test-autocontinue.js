@@ -1,9 +1,9 @@
-// Test unitaire de autocontinue-source.js : les six variantes de phrase, le garde-fou
-// anti-faux-positif, le compteur maximum et la pause. Aucune dependance, aucun framework,
-// comme test-status-source.js. Lance avec : node test-autocontinue.js
+// Unit test for autocontinue-source.js: the six phrase variants, the anti-false-positive
+// guard, the maximum counter and the pause. No dependency, no framework,
+// like test-status-source.js. Run with: node test-autocontinue.js
 //
-// Seule la logique PURE est testee ici. Le DOM (selecteurs de messages, bouton « Continue »)
-// est dans autocontinue.js et n'est pas couvert : il ne peut se verifier que sur la vraie page.
+// Only the PURE logic is tested here. The DOM (message selectors, "Continue" button)
+// is in autocontinue.js and is not covered: it can only be verified on the real page.
 'use strict';
 
 var assert = require('assert');
@@ -11,9 +11,9 @@ var fs = require('fs');
 var path = require('path');
 var vm = require('vm');
 
-// autocontinue-source.js est charge par importScripts() et par <script> dans l'extension, pas
-// par require() : pas de module.exports a y ajouter. On l'evalue dans son propre contexte et on
-// relit ses "var" et "function" de premier niveau dessus.
+// autocontinue-source.js is loaded by importScripts() and by <script> in the extension, not
+// by require(): no module.exports to add to it. We evaluate it in its own context and
+// read back its top-level "var" and "function" on it.
 var src = fs.readFileSync(path.join(__dirname, 'autocontinue-source.js'), 'utf8');
 var sandbox = {};
 vm.createContext(sandbox);
@@ -22,15 +22,15 @@ vm.runInContext(src, sandbox);
 var tests = [];
 function test(name, fn) { tests.push({ name: name, fn: fn }); }
 
-// Reglages nominaux : actif, pas en pause, compteur vierge, maximum illimite.
+// Nominal settings: active, not paused, fresh counter, unlimited maximum.
 function on(over) {
   var s = { enabled: true, paused: false, count: 0, maxCount: 0 };
   Object.keys(over || {}).forEach(function (k) { s[k] = over[k]; });
   return s;
 }
 
-// Un scan qui remplit les deux conditions : bouton visible, phrase dans le dernier message
-// seulement.
+// A scan that satisfies both conditions: button visible, phrase in the last message
+// only.
 function scan(over) {
   var d = {
     hasButton: true,
@@ -41,9 +41,9 @@ function scan(over) {
   return d;
 }
 
-// ---- les six variantes de phrase ------------------------------------------------------------
+// ---- the six phrase variants -----------------------------------------------------------------
 
-// Une phrase reelle est noyee dans un paragraphe : on teste en sous-chaine, pas en egalite.
+// A real sentence is buried in a paragraph: we test as a substring, not by equality.
 var VARIANTES = [
   ['tool-use limit',    'Claude has hit the tool-use limit for this turn.'],
   ['tool use limit',    'I reached the tool use limit while working on this.'],
@@ -54,60 +54,60 @@ var VARIANTES = [
 ];
 
 VARIANTES.forEach(function (v) {
-  test('variante « ' + v[0] + ' » detectee dans un paragraphe', function () {
+  test('variant "' + v[0] + '" detected in a paragraph', function () {
     assert.strictEqual(sandbox.acHasLimitPhrase(v[1]), true);
   });
 });
 
-test('les six variantes sont bien celles listees', function () {
+test('the six variants are indeed the ones listed', function () {
   assert.strictEqual(sandbox.AC_LIMIT_PHRASES.length, 6);
   assert.strictEqual(sandbox.AC_LIMIT_PHRASES.join('|'),
     VARIANTES.map(function (v) { return v[0]; }).join('|'));
 });
 
-test('detection insensible a la casse', function () {
+test('detection is case-insensitive', function () {
   assert.strictEqual(sandbox.acHasLimitPhrase('TOOL-USE LIMIT reached'), true);
   assert.strictEqual(sandbox.acHasLimitPhrase('Tool Call Limit'), true);
 });
 
-test('texte ordinaire, vide ou non-chaine : aucune phrase', function () {
+test('ordinary, empty or non-string text: no phrase', function () {
   assert.strictEqual(sandbox.acHasLimitPhrase('Voici la reponse complete.'), false);
   assert.strictEqual(sandbox.acHasLimitPhrase(''), false);
   assert.strictEqual(sandbox.acHasLimitPhrase(null), false);
   assert.strictEqual(sandbox.acHasLimitPhrase(42), false);
 });
 
-// ---- les deux conditions cumulees -------------------------------------------------------------
+// ---- the two cumulative conditions ------------------------------------------------------------
 
-test('bouton + phrase dans le dernier message seulement : on continue', function () {
+test('button + phrase in the last message only: we continue', function () {
   var d = sandbox.acDecide(scan(), on());
   assert.strictEqual(d.go, true, d.reason);
 });
 
-test('phrase sans bouton Continue : on ne continue pas', function () {
+test('phrase without a Continue button: we do not continue', function () {
   var d = sandbox.acDecide(scan({ hasButton: false }), on());
   assert.strictEqual(d.go, false);
-  assert.ok(d.reason.indexOf('bouton') !== -1, d.reason);
+  assert.ok(d.reason.indexOf('button') !== -1, d.reason);
 });
 
-test('bouton sans phrase dans le dernier message : on ne continue pas', function () {
+test('button without a phrase in the last message: we do not continue', function () {
   var d = sandbox.acDecide(scan({ lastText: 'Voici la reponse, terminee.' }), on());
   assert.strictEqual(d.go, false);
-  assert.ok(d.reason.indexOf('dernier message') !== -1, d.reason);
+  assert.ok(d.reason.indexOf('last message') !== -1, d.reason);
 });
 
-// Le faux positif que ce garde-fou existe pour eviter : une conversation dont le SUJET est la
-// limite de tool-use en parle a chaque message, et s'auto-continuerait sans fin.
-test('conversation qui parle du sujet : phrase plus haut, on ne continue pas', function () {
+// The false positive this guard exists to avoid: a conversation whose SUBJECT is the
+// tool-use limit mentions it in every message, and would auto-continue itself endlessly.
+test('conversation that discusses the subject: phrase earlier, we do not continue', function () {
   var d = sandbox.acDecide(scan({
     otherTexts: ['Explique-moi comment marche la tool-use limit de Claude.',
                  'Voici comment elle fonctionne.']
   }), on());
   assert.strictEqual(d.go, false);
-  assert.ok(d.reason.indexOf('plus haut') !== -1, d.reason);
+  assert.ok(d.reason.indexOf('earlier') !== -1, d.reason);
 });
 
-test('phrase dans un seul message ancien, absente du dernier : on ne continue pas', function () {
+test('phrase in a single old message, absent from the last one: we do not continue', function () {
   var d = sandbox.acDecide(scan({
     lastText: 'Voici la suite.',
     otherTexts: ['Cette reponse a atteint la tool call limit.']
@@ -115,56 +115,56 @@ test('phrase dans un seul message ancien, absente du dernier : on ne continue pa
   assert.strictEqual(d.go, false);
 });
 
-test('conversation d un seul message : rien "ailleurs", on continue', function () {
+test('conversation with a single message: nothing "elsewhere", we continue', function () {
   var d = sandbox.acDecide(scan({ otherTexts: [] }), on());
   assert.strictEqual(d.go, true, d.reason);
 });
 
-// ---- pause et activation ----------------------------------------------------------------------
+// ---- pause and activation ---------------------------------------------------------------------
 
-test('desactive : on ne continue pas, meme si tout est reuni', function () {
+test('disabled: we do not continue, even if everything else is in place', function () {
   var d = sandbox.acDecide(scan(), on({ enabled: false }));
   assert.strictEqual(d.go, false);
-  assert.ok(d.reason.indexOf('desactive') !== -1, d.reason);
+  assert.ok(d.reason.indexOf('disabled') !== -1, d.reason);
 });
 
-test('en pause : on ne continue pas, sans toucher aux autres reglages', function () {
+test('paused: we do not continue, without touching the other settings', function () {
   var d = sandbox.acDecide(scan(), on({ paused: true }));
   assert.strictEqual(d.go, false);
-  assert.ok(d.reason.indexOf('pause') !== -1, d.reason);
+  assert.ok(d.reason.indexOf('paused') !== -1, d.reason);
 });
 
-// ---- compteur maximum -------------------------------------------------------------------------
+// ---- maximum counter --------------------------------------------------------------------------
 
-test('compteur sous le maximum : on continue', function () {
+test('counter below the maximum: we continue', function () {
   assert.strictEqual(sandbox.acDecide(scan(), on({ count: 9, maxCount: 10 })).go, true);
 });
 
-test('compteur egal au maximum : on s arrete', function () {
+test('counter equal to the maximum: we stop', function () {
   var d = sandbox.acDecide(scan(), on({ count: 10, maxCount: 10 }));
   assert.strictEqual(d.go, false);
   assert.ok(d.reason.indexOf('maximum') !== -1, d.reason);
 });
 
-test('compteur au-dela du maximum : on s arrete aussi', function () {
+test('counter beyond the maximum: we stop too', function () {
   assert.strictEqual(sandbox.acDecide(scan(), on({ count: 42, maxCount: 10 })).go, false);
 });
 
-test('maximum a 0 = illimite : un gros compteur ne bloque pas', function () {
+test('maximum at 0 = unlimited: a large counter does not block', function () {
   assert.strictEqual(sandbox.acDecide(scan(), on({ count: 5000, maxCount: 0 })).go, true);
 });
 
-test('acMaxReached : 0 est illimite, pas "deja atteint"', function () {
+test('acMaxReached: 0 is unlimited, not "already reached"', function () {
   assert.strictEqual(sandbox.acMaxReached({ count: 0, maxCount: 0 }), false);
   assert.strictEqual(sandbox.acMaxReached({ count: 3, maxCount: 3 }), true);
   assert.strictEqual(sandbox.acMaxReached({ count: 2, maxCount: 3 }), false);
 });
 
-// ---- l'etat exact releve en usage reel ----------------------------------------------------------
+// ---- the exact state observed in real use --------------------------------------------------------
 
-// Storage constate : maxCount a 0, paused a false, et autoContinueCount TOTALEMENT ABSENT.
-// C'est la combinaison soupconnee de tout bloquer. Ces trois tests fixent le contrat : elle ne
-// bloque rien, et la cle manquante se comporte a l'identique d'une cle a zero.
+// Storage as observed: maxCount at 0, paused at false, and autoContinueCount COMPLETELY ABSENT.
+// This is the combination suspected of blocking everything. These three tests fix the contract: it
+// blocks nothing, and the missing key behaves identically to a key at zero.
 var RELEVE = { autoContinueMaxCount: 0, autoContinuePaused: false };
 
 function releve(over) {
@@ -173,17 +173,17 @@ function releve(over) {
   return o;
 }
 
-test('état relevé + activé : maxCount 0 et compteur absent NE bloquent pas', function () {
+test('observed state + enabled: maxCount 0 and a missing counter do NOT block', function () {
   var s = sandbox.acSettings(releve({ autoContinueEnabled: true }));
-  assert.strictEqual(s.count, 0, 'une clé absente doit être lue comme 0');
+  assert.strictEqual(s.count, 0, 'a missing key must be read as 0');
   assert.strictEqual(s.maxCount, sandbox.AC_UNLIMITED);
-  assert.strictEqual(sandbox.acMaxReached(s), false, 'maxCount 0 lu comme quota épuisé');
+  assert.strictEqual(sandbox.acMaxReached(s), false, 'maxCount 0 read as an exhausted quota');
 
   var d = sandbox.acDecide(scan(), s);
   assert.strictEqual(d.go, true, d.reason);
 });
 
-test('compteur ABSENT et compteur a 0 : strictement le meme comportement', function () {
+test('counter ABSENT and counter at 0: strictly the same behavior', function () {
   var absent = sandbox.acSettings(releve({ autoContinueEnabled: true }));
   var zero = sandbox.acSettings(releve({ autoContinueEnabled: true, autoContinueCount: 0 }));
 
@@ -191,28 +191,28 @@ test('compteur ABSENT et compteur a 0 : strictement le meme comportement', funct
   assert.strictEqual(sandbox.acDecide(scan(), absent).go, sandbox.acDecide(scan(), zero).go);
 });
 
-// La seule valeur manquante qui bloque vraiment — et celle qui manquait au relevé.
-test('état relevé SANS autoContinueEnabled : c est ca, et seulement ca, qui bloque', function () {
+// The only missing value that really blocks — and the one missing from the observation.
+test('observed state WITHOUT autoContinueEnabled: that, and only that, is what blocks', function () {
   var d = sandbox.acDecide(scan(), sandbox.acSettings(RELEVE));
   assert.strictEqual(d.go, false);
-  assert.ok(d.reason.indexOf('desactive') !== -1, d.reason);
+  assert.ok(d.reason.indexOf('disabled') !== -1, d.reason);
 });
 
-test('maxCount absent, null ou aberrant : illimite, jamais bloquant', function () {
+test('maxCount missing, null or nonsensical: unlimited, never blocking', function () {
   [undefined, null, '', 'douze', NaN, -1].forEach(function (v) {
     var s = sandbox.acSettings({ autoContinueEnabled: true, autoContinueMaxCount: v });
-    assert.strictEqual(s.maxCount, sandbox.AC_UNLIMITED, 'valeur ' + JSON.stringify(v));
-    assert.strictEqual(sandbox.acDecide(scan(), s).go, true, 'valeur ' + JSON.stringify(v));
+    assert.strictEqual(s.maxCount, sandbox.AC_UNLIMITED, 'value ' + JSON.stringify(v));
+    assert.strictEqual(sandbox.acDecide(scan(), s).go, true, 'value ' + JSON.stringify(v));
   });
 });
 
-test('AC_UNLIMITED vaut bien 0 : la convention est celle du popup', function () {
+test('AC_UNLIMITED is indeed 0: the convention is the popup\'s', function () {
   assert.strictEqual(sandbox.AC_UNLIMITED, 0);
 });
 
-// ---- normalisation des reglages ---------------------------------------------------------------
+// ---- settings normalization -------------------------------------------------------------------
 
-test('storage vide : desactive, compteur a zero, maximum illimite', function () {
+test('empty storage: disabled, counter at zero, unlimited maximum', function () {
   var s = sandbox.acSettings({});
   assert.strictEqual(s.enabled, false);
   assert.strictEqual(s.paused, false);
@@ -220,9 +220,9 @@ test('storage vide : desactive, compteur a zero, maximum illimite', function () 
   assert.strictEqual(s.maxCount, 0);
 });
 
-test('valeurs aberrantes ramenees au comportement prudent', function () {
+test('nonsensical values brought back to the cautious behavior', function () {
   var s = sandbox.acSettings({
-    autoContinueEnabled: 'oui',      // pas un booleen : ne compte pas comme actif
+    autoContinueEnabled: 'oui',      // not a boolean: does not count as active
     autoContinueCount: -3,
     autoContinueMaxCount: 'douze'
   });
@@ -231,23 +231,23 @@ test('valeurs aberrantes ramenees au comportement prudent', function () {
   assert.strictEqual(s.maxCount, 0);
 });
 
-test('maximum borne a AC_MAX_LIMIT et tronque a l entier', function () {
+test('maximum clamped to AC_MAX_LIMIT and truncated to an integer', function () {
   assert.strictEqual(sandbox.acSettings({ autoContinueMaxCount: 5000 }).maxCount,
     sandbox.AC_MAX_LIMIT);
   assert.strictEqual(sandbox.acSettings({ autoContinueMaxCount: 12.9 }).maxCount, 12);
   assert.strictEqual(sandbox.AC_MAX_LIMIT, 999);
 });
 
-test('les quatre cles de storage sont bien celles annoncees', function () {
+test('the four storage keys are indeed the ones announced', function () {
   assert.strictEqual(sandbox.AC_KEYS.join(','),
     'autoContinueEnabled,autoContinueMaxCount,autoContinueCount,autoContinuePaused');
 });
 
-test('scan absent : aucune exception, on ne continue pas', function () {
+test('scan absent: no exception, we do not continue', function () {
   assert.strictEqual(sandbox.acDecide(null, on()).go, false);
 });
 
-// ---- execution ----------------------------------------------------------------------------
+// ---- run -----------------------------------------------------------------------------------
 var failed = 0;
 tests.forEach(function (t) {
   try {
@@ -260,5 +260,5 @@ tests.forEach(function (t) {
   }
 });
 
-console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passes');
+console.log('\n' + (tests.length - failed) + '/' + tests.length + ' tests passed');
 if (failed) process.exit(1);
